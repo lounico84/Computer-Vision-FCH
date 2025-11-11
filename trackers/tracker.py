@@ -2,6 +2,7 @@ from ultralytics import YOLO
 import supervision as sv
 import pickle
 import cv2
+import numpy as np
 import os
 import sys
 sys.path.append('../')
@@ -135,6 +136,20 @@ class Tracker:
 
         return frame
     
+    def draw_triangle(self, frame, bbox, color):
+        y = int(bbox[1])
+        x,_ = get_center_of_bbox(bbox)
+
+        traingle_points = np.array([
+            [x,y],
+            [x-10,y-20],
+            [x+10,y-20]
+        ])
+        cv2.drawContours(frame, [traingle_points], 0, color, cv2.FILLED)
+        cv2.drawContours(frame, [traingle_points], 0, (0,0,0), 2)
+
+        return frame
+
     def draw_annotations(self, video_frames, tracks):
         output_video_frame = []
         for frame_num, frame in enumerate(video_frames):
@@ -156,6 +171,10 @@ class Tracker:
             # Draw Goalkeepers
             for track_id, goalkeeper in goalkeeper_dict.items():
                 frame = self.draw_ellipse(frame, goalkeeper["bbox"],(255,0,0), track_id)
+            
+            # Draw Ball
+            for _, ball in ball_dict.items():
+                frame = self.draw_triangle(frame, ball["bbox"], 0,255,0, track_id)
 
             output_video_frame.append(frame)
         
