@@ -108,14 +108,14 @@ class Tracker:
         rectangle_width = 40
         rectangle_height = 20
         x1_rect = x_center - rectangle_width//2
-        x2_rect = x_center - rectangle_width//2
-        y1_rect = (y2 - rectangle_height//2) + 15
-        y2_rect = (y2 + rectangle_height//2) + 15
+        x2_rect = x_center + rectangle_width//2
+        y1_rect = (y2 - rectangle_height//2) + 10
+        y2_rect = (y2 + rectangle_height//2) + 10
 
         if track_id is not None:
             cv2.rectangle(frame,
-                          (int(x1_rect), int(y1_rect)),
-                          (int(x2_rect), int(y2_rect)),
+                          (int(x1_rect),int(y1_rect)),
+                          (int(x2_rect),int(y2_rect)),
                           color,
                           cv2.FILLED)
 
@@ -128,9 +128,9 @@ class Tracker:
                 f"{track_id}",
                 (int(x1_text), int(y1_rect+15)),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
+                0.4,
                 (0,0,0),
-                2
+                1
             )
 
         return frame
@@ -151,7 +151,7 @@ class Tracker:
 
             # Draw Referees
             for _, referee in referee_dict.items():
-                frame = self.draw_ellipse(frame, referee["bbox"],(0,255,255), track_id)
+                frame = self.draw_ellipse(frame, referee["bbox"],(0,255,255))
 
             # Draw Goalkeepers
             for track_id, goalkeeper in goalkeeper_dict.items():
