@@ -17,6 +17,7 @@ class Tracker:
         return detections
 
     def get_object_tracks(self, frames, read_from_stub=False, stub_path=None):
+
         # Check if pickle file exists to not run yolo again for developement
         if read_from_stub and stub_path is not None and os.path.exists(stub_path):
             with open(stub_path,'rb') as f:
@@ -81,3 +82,21 @@ class Tracker:
                 pickle.dump(tracks,f)
 
         return tracks
+    
+    def draw_ellipse(self, frame, bbox, color, track_id):
+        y2 = int(bbox[3])
+        
+    
+    def draw_annotations(self, video_frames, tracks):
+        output_video_frame = []
+        for frame_num, frame in enumerate(video_frames):
+            frame = frame.copy()
+
+            player_dict = tracks["players"][frame_num]
+            ball_dict = tracks["ball"][frame_num]
+            referee_dict = tracks["referees"][frame_num]
+            goalkeeper_dict = tracks["goalkeepers"][frame_num]
+
+            # Draw Players
+            for track_id, player in player_dict.items():
+                frame = self.draw_ellipse(frame, player["bbox"],(0,0,255), track_id)
