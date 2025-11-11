@@ -1,6 +1,7 @@
 import cv2
 from utils import read_video, save_video
 from trackers import Tracker
+from team_assigner import TeamAssigner
 
 def main():
     # Read Video
@@ -24,7 +25,20 @@ def main():
         cv2.imwrite(f'output_video_match/cropped_img.jpg', cropped_image)
         break
     '''
-    
+
+    # Assign Player Team
+    team_assigner = TeamAssigner()
+    team_assigner.assign_team_color(video_frames[0], tracks['players'][0])
+
+    for frame_number, player_track in enumerate(tracks['players']):
+        for player_id, track in player_track.items():
+            team = team_assigner.get_player_team(video_frames[frame_number],
+                                                 track['bbox'],
+                                                 player_id)
+            tracks['players'][frame_number][player_id]['team'] = team
+            tracks['players'][frame_number][player_id]['team_color'] = team_assigner.team_colors[team]
+
+
     # Draw Output
     ## Draw object tracks
     output_video_frames = tracker.draw_annotations(video_frames, tracks)
