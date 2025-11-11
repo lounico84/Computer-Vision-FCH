@@ -121,6 +121,14 @@ class Tracker:
             for track_id, player in player_dict.items():
                 frame = self.draw_ellipse(frame, player["bbox"],(0,0,255), track_id)
 
+            # Draw Referees
+            for track_id, referee in referee_dict.items():
+                frame = self.draw_ellipse(frame, referee["bbox"],(0,255,255), track_id)
+
+            # Draw Goalkeepers
+            for track_id, goalkeeper in goalkeeper_dict.items():
+                frame = self.draw_ellipse(frame, goalkeeper["bbox"],(255,0,0), track_id)
+
             output_video_frame.append(frame)
         
         return output_video_frame
