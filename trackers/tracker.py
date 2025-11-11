@@ -17,7 +17,7 @@ class Tracker:
         return detections
 
     def get_object_tracks(self, frames, read_from_stub=False, stub_path=None):
-        # Check if stub file exists to not run yolo again for developement
+        # Check if pickle file exists to not run yolo again for developement
         if read_from_stub and stub_path is not None and os.path.exists(stub_path):
             with open(stub_path,'rb') as f:
                 tracks = pickle.load(f)
