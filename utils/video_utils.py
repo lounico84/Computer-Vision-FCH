@@ -14,5 +14,5 @@ def save_video(output_video_frames, output_video_path):
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
     out = cv2.VideoWriter(output_video_path, fourcc, 60, (output_video_frames[0].shape[1], output_video_frames[0].shape[0]))
     for frame in output_video_frames:
-        out.wirte(frame)
+        out.write(frame)
     out.release
