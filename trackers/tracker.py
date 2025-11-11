@@ -21,7 +21,7 @@ class Tracker:
         if read_from_stub and stub_path is not None and os.path.exists(stub_path):
             with open(stub_path,'rb') as f:
                 tracks = pickle.load(f)
-                return tracks
+            return tracks
 
         detections = self.detect_frames(frames)
 
