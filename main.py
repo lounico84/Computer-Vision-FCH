@@ -10,8 +10,12 @@ def main():
 
     tracks = tracker.get_object_tracks(video_frames, read_from_stub=True, stub_path='project/Computer-Vision-FCH/stubs/track_stubs.pkl')
 
+    # Draw Output
+    ## Draw object tracks
+    output_video_frames = tracker.draw_annotations(video_frames, tracks)
+
     # Save Video
-    save_video(video_frames, 'output_video_match/output_video.avi')
+    save_video(output_video_frames, 'output_video_match/output_video.avi')
 
 if __name__ == '__main__':
     main()
