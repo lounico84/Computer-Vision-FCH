@@ -115,7 +115,7 @@ class Tracker:
         if track_id is not None:
             cv2.rectangle(frame,
                           (int(x1_rect), int(y1_rect)),
-                          (int(x1_rect), int(y1_rect)),
+                          (int(x2_rect), int(y2_rect)),
                           color,
                           cv2.FILLED)
 
