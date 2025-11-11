@@ -110,8 +110,8 @@ class Tracker:
         rectangle_height = 20
         x1_rect = x_center - rectangle_width//2
         x2_rect = x_center + rectangle_width//2
-        y1_rect = (y2 - rectangle_height//2) + 10
-        y2_rect = (y2 + rectangle_height//2) + 10
+        y1_rect = (y2 - rectangle_height//2) + 15
+        y2_rect = (y2 + rectangle_height//2) + 15
 
         if track_id is not None:
             cv2.rectangle(frame,
@@ -131,7 +131,7 @@ class Tracker:
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.4,
                 (0,0,0),
-                1
+                2
             )
 
         return frame
@@ -162,19 +162,19 @@ class Tracker:
 
             # Draw Players
             for track_id, player in player_dict.items():
-                frame = self.draw_ellipse(frame, player["bbox"],(0,0,255), track_id)
+                frame = self.draw_ellipse(frame, player["bbox"], (0,0,255), track_id)
 
             # Draw Referees
             for _, referee in referee_dict.items():
-                frame = self.draw_ellipse(frame, referee["bbox"],(0,255,255))
+                frame = self.draw_ellipse(frame, referee["bbox"], (0,255,255))
 
             # Draw Goalkeepers
             for track_id, goalkeeper in goalkeeper_dict.items():
-                frame = self.draw_ellipse(frame, goalkeeper["bbox"],(255,0,0), track_id)
+                frame = self.draw_ellipse(frame, goalkeeper["bbox"], (255,0,0), track_id)
             
             # Draw Ball
             for _, ball in ball_dict.items():
-                frame = self.draw_triangle(frame, ball["bbox"], 0,255,0, track_id)
+                frame = self.draw_triangle(frame, ball["bbox"], (0,255,0))
 
             output_video_frame.append(frame)
         
