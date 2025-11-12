@@ -162,7 +162,8 @@ class Tracker:
 
             # Draw Players
             for track_id, player in player_dict.items():
-                color = player.get("team_color", (0,0,255))
+                raw = player.get("team_color")
+                color = (0,255,255) if raw is None else tuple(int(x) for x in np.asarray(raw).tolist())
                 frame = self.draw_ellipse(frame, player["bbox"], color, track_id)
 
             # Draw Referees
