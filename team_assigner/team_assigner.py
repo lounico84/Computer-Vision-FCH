@@ -8,6 +8,7 @@ class TeamAssigner:
         self.player_team_dict = {}
         self.referee_color = None
         self.ref_vote_counts = {}
+        self.player_obs_counts = {}
 
     def get_clustering_model(self, image):
         image_2d = image.reshape(-1, 3)
@@ -134,40 +135,42 @@ class TeamAssigner:
         self.team_colors[2] = tuple(map(int, c2))
 
     def get_player_team(self, frame, player_bbox, player_id):
-        # konsistent bleiben, falls schon entschieden
-        if player_id in self.player_team_dict:
-            return self.player_team_dict[player_id]
-
+        """
+        Gibt ein temporäres Team-Label (1 oder 2) zurück und sammelt
+        gleichzeitig Statistiken, wie oft ein Track Ref-ähnlich ist.
+        Die endgültige Entscheidung (Ref oder nicht) passiert später.
+        """
         color = self.get_player_color(frame, player_bbox).astype(np.float32)
 
+        # Beobachtungen zählen
+        self.player_obs_counts[player_id] = self.player_obs_counts.get(player_id, 0) + 1
+
+        # Distanz zu Teamfarben
         c1 = np.asarray(self.team_colors[1], dtype=np.float32)
         c2 = np.asarray(self.team_colors[2], dtype=np.float32)
         d1 = np.linalg.norm(color - c1)
         d2 = np.linalg.norm(color - c2)
 
-        # Standard: nächstes Team
         team = 1 if d1 < d2 else 2
 
-        # Referee-Korrektur, falls wir eine Ref-Farbe haben
+        # Ref-Ähnlichkeit nur zählen, noch NICHT umlabeln
         if self.referee_color is not None:
             cref = np.asarray(self.referee_color, dtype=np.float32)
             dref = np.linalg.norm(color - cref)
 
-            # Ref muss deutlich näher sein als beide Teams
-            margin = 5.0
-            if dref + margin < min(d1, d2):
-                # Vote als Ref-Kandidat
+            # Helligkeit prüfen (nur dunkle Kandidaten)
+            col_uint8 = color.astype(np.uint8).reshape(1, 1, 3)
+            h, s, v = cv2.cvtColor(col_uint8, cv2.COLOR_BGR2HSV)[0, 0]
+            if dref < 0.6 * min(d1, d2):
                 prev = self.ref_vote_counts.get(player_id, 0)
                 self.ref_vote_counts[player_id] = prev + 1
 
-                # wie viele Frames nötig, bis wir sicher "Schiri" sagen
-                min_votes = 2   # jetzt recht aggressiv
-                if self.ref_vote_counts[player_id] >= min_votes:
-                    team = 0  # 0 = Schiri/Linienrichter-Track
+        # temporäres Team speichern (falls noch keins vorhanden)
+        if player_id not in self.player_team_dict:
+            self.player_team_dict[player_id] = team
 
-        self.player_team_dict[player_id] = team
         return team
-    
+        
     def save_color_debug(self, out_path="output_video_match/color_debug.png"):
         """
         Speichert ein kleines Bild mit den drei wichtigsten Farben:
