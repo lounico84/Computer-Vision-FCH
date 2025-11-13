@@ -4,6 +4,7 @@ from utils import read_video, save_video, get_center_of_bbox
 from trackers import Tracker
 from team_assigner import TeamAssigner
 from player_ball_assigner import PlayerBallAssigner
+from analytics import export_frame_csv1
 
 def main():
     # Read Video
@@ -228,6 +229,18 @@ def main():
         team_ball_control.append(last_team)
 
     team_ball_control = np.array(team_ball_control)
+
+    # --- CSV-Export der Frame-Daten ---
+    export_frame_csv1(
+        tracks=tracks,
+        team_ball_control=team_ball_control,
+        fps=60,
+        output_path="project/Computer-Vision-FCH/analytics/frame_events.csv",
+    )
+    
+    # Draw Output
+    ## Draw object tracks
+    output_video_frames = tracker.draw_annotations(video_frames, tracks, team_ball_control)
     
     # Draw Output
     ## Draw object tracks
