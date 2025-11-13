@@ -9,6 +9,7 @@ class TeamAssigner:
         self.referee_color = None
         self.ref_vote_counts = {}
         self.player_obs_counts = {}
+        self.team_vote_counts = {} 
 
     def get_clustering_model(self, image):
         image_2d = image.reshape(-1, 3)
@@ -164,10 +165,13 @@ class TeamAssigner:
             if dref < 0.6 * min(d1, d2):
                 prev = self.ref_vote_counts.get(player_id, 0)
                 self.ref_vote_counts[player_id] = prev + 1
-
-        # temporäres Team speichern (falls noch keins vorhanden)
-        if player_id not in self.player_team_dict:
-            self.player_team_dict[player_id] = team
+        
+        # NEU: Team-Votes sammeln
+        votes = self.team_vote_counts.get(player_id)
+        if votes is None:
+            votes = {1: 0, 2: 0}
+            self.team_vote_counts[player_id] = votes
+        votes[team] += 1
 
         return team
         

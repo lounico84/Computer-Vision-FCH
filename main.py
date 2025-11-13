@@ -5,12 +5,12 @@ from team_assigner import TeamAssigner
 
 def main():
     # Read Video
-    video_frames = read_video('input_videos_match/Test/kuesnacht_test_clip2.MP4')
+    video_frames = read_video('input_videos_match/Test/wiesendangen_test_clip_short.mp4')
 
     # Initialize Tracker
     tracker =  Tracker('yolo_training/models/fifth_model/run1/weights/best.pt')
 
-    tracks = tracker.get_object_tracks(video_frames, read_from_stub=True, stub_path='project/Computer-Vision-FCH/stubs/track_stubs_k.pkl')
+    tracks = tracker.get_object_tracks(video_frames, read_from_stub=True, stub_path='project/Computer-Vision-FCH/stubs/track_stubs_w.pkl')
     '''
     # Save cropped image
 
@@ -42,30 +42,37 @@ def main():
                 track['bbox'],
                 player_id
             )
+    
+    # Nach dem 1. PASS: Mehrheits-Team pro Track bestimmen
+    for player_id, votes_dict in team_assigner.team_vote_counts.items():
+        v1 = votes_dict.get(1, 0)
+        v2 = votes_dict.get(2, 0)
+        # einfache Mehrheit; bei Gleichstand Team 1
+        majority_team = 1 if v1 >= v2 else 2
+        team_assigner.player_team_dict[player_id] = majority_team
 
     # Finale Entscheidung pro Track: Ref oder Team 1/2
     final_labels = {}  # player_id -> 0,1,2
 
-    # Schwellwerte für Ref-Entscheidung
-    min_votes = 7            # wie oft der Track „ref-ähnlich“ war
-    min_ratio = 0.8          # wie viele Frames ein Track existiert hat (votes / observations)
-    min_observations = 10    # Track muss mindestens 10 Mal beobachtet worden sein
+    min_votes = 7
+    min_ratio = 0.8
+    min_observations = 10
 
     for player_id, obs in team_assigner.player_obs_counts.items():
         votes = team_assigner.ref_vote_counts.get(player_id, 0)
 
-        # Bedingung: mind. 7 Ref-Votes und zugleich in >= 80s% der beobachteten Frames Ref-ähnlich
+        # Default-Team jetzt: Mehrheits-Team aus oben
+        default_team = team_assigner.player_team_dict.get(player_id, 1)
+
         if (
             team_assigner.referee_color is not None
             and obs >= min_observations
             and votes >= min_votes
             and votes >= min_ratio * obs
         ):
-            # Track wird als Schiri/Linienrichter interpretiert
-            final_labels[player_id] = 0
+            final_labels[player_id] = 0   # Ref
         else:
-            # Default-Team aus dem ersten Pass
-            final_labels[player_id] = team_assigner.player_team_dict.get(player_id, 1)
+            final_labels[player_id] = default_team
 
     # 2. PASS: Tracks anhand finaler Labels umbauen
     for frame_number, player_track in enumerate(tracks['players']):
@@ -85,7 +92,7 @@ def main():
     output_video_frames = tracker.draw_annotations(video_frames, tracks)
 
     # Save Video
-    save_video(output_video_frames, 'output_video_match/output_video_k.avi')
+    save_video(output_video_frames, 'output_video_match/output_video_w.avi')
 
 if __name__ == '__main__':
     main()
