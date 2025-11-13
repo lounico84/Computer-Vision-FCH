@@ -1,19 +1,19 @@
 import cv2
 import numpy as np
-from utils import read_video, save_video
+from utils import read_video, save_video, get_center_of_bbox
 from trackers import Tracker
 from team_assigner import TeamAssigner
 from player_ball_assigner import PlayerBallAssigner
 
 def main():
     # Read Video
-    #video_frames = read_video('input_videos_match/Test/wiesendangen_test_clip_short.mp4')
-    video_frames = read_video('input_videos_match/Test/kuesnacht_test_clip2.MP4')
+    video_frames = read_video('input_videos_match/Test/wiesendangen_test_clip_short.mp4')
+    #video_frames = read_video('input_videos_match/Test/kuesnacht_test_clip2.MP4')
 
     # Initialize Tracker
     tracker =  Tracker('yolo_training/models/fifth_model/run1/weights/best.pt')
 
-    tracks = tracker.get_object_tracks(video_frames, read_from_stub=True, stub_path='project/Computer-Vision-FCH/stubs/track_stubs_k.pkl')
+    tracks = tracker.get_object_tracks(video_frames, read_from_stub=True, stub_path='project/Computer-Vision-FCH/stubs/track_stubs_w.pkl')
     '''
     # Save cropped image
 
@@ -93,19 +93,100 @@ def main():
                 tracks['players'][frame_number][player_id]['team'] = team
                 tracks['players'][frame_number][player_id]['team_color'] = team_assigner.team_colors[team]
 
+    # --- Team-Schwerpunkte (x-Position) aus Spieler-Tracks bestimmen ---
+    team_x_positions = {1: [], 2: []}
+
+    for frame_number, player_track in enumerate(tracks['players']):
+        for player_id, track in player_track.items():
+            team = track.get('team')
+            if team not in (1, 2):
+                continue
+            x, _ = get_center_of_bbox(track['bbox'])
+            team_x_positions[team].append(x)
+
+    team_mean_x = {}
+    for t in (1, 2):
+        if len(team_x_positions[t]) > 0:
+            team_mean_x[t] = float(np.mean(team_x_positions[t]))
+        else:
+            team_mean_x[t] = None  # falls ein Team nie gesehen wurde (eher unwahrscheinlich)
+    
+    # --- Durchschnitts-x pro Torhüter-Track ---
+    goalkeeper_x_positions = {}  # gk_id -> Liste von x
+
+    for frame_number, gk_track in enumerate(tracks['goalkeepers']):
+        for gk_id, track in gk_track.items():
+            x, _ = get_center_of_bbox(track['bbox'])
+            if gk_id not in goalkeeper_x_positions:
+                goalkeeper_x_positions[gk_id] = []
+            goalkeeper_x_positions[gk_id].append(x)
+
+    gk_mean_x = {gk_id: float(np.mean(xs)) for gk_id, xs in goalkeeper_x_positions.items()}
+
+        # --- Torhüter -> Team-Zuordnung nach räumlicher Nähe zu Team-Schwerpunkten ---
+    goalkeeper_team_map = {}
+
+    for gk_id, gk_x in gk_mean_x.items():
+        best_team = None
+        best_dist = float('inf')
+
+        for t in (1, 2):
+            if team_mean_x[t] is None:
+                continue
+            dist = abs(gk_x - team_mean_x[t])
+            if dist < best_dist:
+                best_dist = dist
+                best_team = t
+
+        # Fallback, falls aus irgendeinem Grund beide None sind
+        if best_team is None:
+            best_team = 1
+
+        goalkeeper_team_map[gk_id] = best_team
+    
+        # --- Keeper in den Tracks mit Team versehen (Farbe bleibt blau) ---
+    for frame_number, gk_track in enumerate(tracks['goalkeepers']):
+        for gk_id, track in gk_track.items():
+            team = goalkeeper_team_map.get(gk_id, 1)
+            tracks['goalkeepers'][frame_number][gk_id]['team'] = team
+            # kein 'team_color' setzen, damit draw_annotations weiterhin Blau benutzt
+
     # Assign Ball Aquisition
+    player_assigner = PlayerBallAssigner()
     player_assigner = PlayerBallAssigner()
     team_ball_control = []
 
-    for frame_num, player_track in enumerate(tracks['players']):
-        ball_bbox = tracks['ball'][frame_num][1]['bbox']
-        assigned_player = player_assigner.assign_ball_to_player(player_track, ball_bbox)
+    num_frames = len(tracks['players'])
 
-        if assigned_player != -1:
-            tracks['players'][frame_num][assigned_player]['has_ball'] = True
-            team_ball_control.append(tracks['players'][frame_num][assigned_player]['team'])
+    for frame_num in range(num_frames):
+        player_track = tracks['players'][frame_num]
+        gk_track     = tracks['goalkeepers'][frame_num]
+        ball_dict    = tracks['ball'][frame_num]
+
+        if 1 not in ball_dict:
+            team_ball_control.append(team_ball_control[-1] if team_ball_control else 0)
+            continue
+
+        ball_bbox = ball_dict[1]['bbox']
+
+        all_actors = {}
+        all_actors.update(player_track)
+        all_actors.update(gk_track)
+
+        assigned_id = player_assigner.assign_ball_to_player(all_actors, ball_bbox)
+
+        if assigned_id == -1:
+            team_ball_control.append(team_ball_control[-1] if team_ball_control else 0)
+            continue
+
+        if assigned_id in player_track:
+            player_track[assigned_id]['has_ball'] = True
+            team = player_track[assigned_id]['team']
         else:
-            team_ball_control.append(team_ball_control[-1])
+            gk_track[assigned_id]['has_ball'] = True
+            team = gk_track[assigned_id]['team']
+
+        team_ball_control.append(team)
 
     team_ball_control = np.array(team_ball_control)
     
@@ -114,7 +195,7 @@ def main():
     output_video_frames = tracker.draw_annotations(video_frames, tracks, team_ball_control)
 
     # Save Video
-    save_video(output_video_frames, 'output_video_match/output_video_k.avi')
+    save_video(output_video_frames, 'output_video_match/output_video_w.avi')
 
 if __name__ == '__main__':
     main()

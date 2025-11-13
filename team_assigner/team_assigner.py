@@ -174,6 +174,22 @@ class TeamAssigner:
         votes[team] += 1
 
         return team
+
+    def infer_team_for_bbox(self, frame, bbox):
+        """
+        Bestimmt das Team (1 oder 2) für eine BBox,
+        ohne irgendwelche Votes/Statistiken zu verändern.
+        Ideal für Torhüter.
+        """
+        color = self.get_player_color(frame, bbox).astype(np.float32)
+
+        c1 = np.asarray(self.team_colors[1], dtype=np.float32)
+        c2 = np.asarray(self.team_colors[2], dtype=np.float32)
+
+        d1 = np.linalg.norm(color - c1)
+        d2 = np.linalg.norm(color - c2)
+
+        return 1 if d1 < d2 else 2
         
     def save_color_debug(self, out_path="output_video_match/color_debug.png"):
         """
