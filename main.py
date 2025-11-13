@@ -14,16 +14,18 @@ def main():
 
     # Save cropped image
     '''
-    for track_id, player in tracks['players'][1].items():
-        bbox = player['bbox']
-        frame = video_frames[0]
+    frame_idx = 1
+    track_id = 17 
 
-        # crop bbox from frame
-        cropped_image = frame[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2])]
+    player = tracks['players'][frame_idx][track_id]
+    bbox = player['bbox']
+    frame = video_frames[frame_idx]
 
-        # save the cropped image
-        cv2.imwrite(f'output_video_match/cropped_img.jpg', cropped_image)
-        break
+    x1, y1, x2, y2 = map(int, bbox)
+    cropped_image = frame[y1:y2, x1:x2]
+
+    cv2.imwrite("output_video_match/cropped_player_17.jpg", cropped_image)
+    exit()
     '''
 
     # Assign Player Team
