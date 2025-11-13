@@ -250,6 +250,9 @@ class Tracker:
             # Draw Goalkeepers
             for track_id, goalkeeper in goalkeeper_dict.items():
                 frame = self.draw_ellipse(frame, goalkeeper["bbox"], (255,0,0), track_id)
+
+                if goalkeeper.get('has_ball', False):
+                    frame = self.draw_triangle(frame, goalkeeper['bbox'], (0,0,255))
             
             # Draw Ball
             for _, ball in ball_dict.items():
