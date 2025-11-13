@@ -11,20 +11,20 @@ def main():
     tracker =  Tracker('yolo_training/models/fifth_model/run1/weights/best.pt')
 
     tracks = tracker.get_object_tracks(video_frames, read_from_stub=True, stub_path='project/Computer-Vision-FCH/stubs/track_stubs_k.pkl')
-
-    # Save cropped image
     '''
+    # Save cropped image
+
     frame_idx = 1
     track_id = 17 
 
-    player = tracks['players'][frame_idx][track_id]
-    bbox = player['bbox']
+    referee = tracks['referees'][frame_idx][track_id]
+    bbox = referee['bbox']
     frame = video_frames[frame_idx]
 
     x1, y1, x2, y2 = map(int, bbox)
     cropped_image = frame[y1:y2, x1:x2]
 
-    cv2.imwrite("output_video_match/cropped_player_17.jpg", cropped_image)
+    cv2.imwrite("output_video_match/cropped_player_19.jpg", cropped_image)
     exit()
     '''
 
@@ -32,7 +32,7 @@ def main():
     team_assigner = TeamAssigner()
     team_assigner.assign_team_color(video_frames, tracks)
     team_assigner.assign_referee_color(video_frames, tracks)
-    team_assigner.save_color_debug("output_video_match/color_debug_k.png")
+    team_assigner.save_color_debug("output_video_match/color_debug_w.png")
     
     # 1. PASS: nur Farben/Abstände messen und Votes sammeln
     for frame_number, player_track in enumerate(tracks['players']):
