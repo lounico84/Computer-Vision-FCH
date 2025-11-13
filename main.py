@@ -7,13 +7,13 @@ from player_ball_assigner import PlayerBallAssigner
 
 def main():
     # Read Video
-    video_frames = read_video('input_videos_match/Test/wiesendangen_test_clip_short.mp4')
-    #video_frames = read_video('input_videos_match/Test/kuesnacht_test_clip2.MP4')
+    #video_frames = read_video('input_videos_match/Test/wiesendangen_test_clip_short.mp4')
+    video_frames = read_video('input_videos_match/Test/kuesnacht_test_clip2.MP4')
 
     # Initialize Tracker
     tracker =  Tracker('yolo_training/models/fifth_model/run1/weights/best.pt')
 
-    tracks = tracker.get_object_tracks(video_frames, read_from_stub=True, stub_path='project/Computer-Vision-FCH/stubs/track_stubs_w.pkl')
+    tracks = tracker.get_object_tracks(video_frames, read_from_stub=True, stub_path='project/Computer-Vision-FCH/stubs/track_stubs_k.pkl')
     '''
     # Save cropped image
 
@@ -151,42 +151,81 @@ def main():
             tracks['goalkeepers'][frame_number][gk_id]['team'] = team
             # kein 'team_color' setzen, damit draw_annotations weiterhin Blau benutzt
 
-    # Assign Ball Aquisition
-    player_assigner = PlayerBallAssigner()
+    # Assign Ball Acquisition (inkl. Torhüter) + geglätteter Team-Ballbesitz
     player_assigner = PlayerBallAssigner()
     team_ball_control = []
 
     num_frames = len(tracks['players'])
+
+    last_team = 0           # aktuelles „offizielles“ Ballbesitz-Team (1/2 oder 0)
+    candidate_team = None   # Team, das evtl. übernehmen will
+    candidate_count = 0     # wie viele Frames hintereinander dieser Kandidat vorne ist
+    min_switch_frames = 5   # Mindestanzahl Frames, bevor der Besitz offiziell wechselt
 
     for frame_num in range(num_frames):
         player_track = tracks['players'][frame_num]
         gk_track     = tracks['goalkeepers'][frame_num]
         ball_dict    = tracks['ball'][frame_num]
 
+        # --- 1) Ball sichtbar? ---
         if 1 not in ball_dict:
-            team_ball_control.append(team_ball_control[-1] if team_ball_control else 0)
+            # Kein Ball -> keine neuen Infos, Frame zählt als „kein klarer Besitz“
+            team_ball_control.append(0)
             continue
 
         ball_bbox = ball_dict[1]['bbox']
 
+        # --- 2) Spieler & Keeper zusammen betrachten ---
         all_actors = {}
         all_actors.update(player_track)
         all_actors.update(gk_track)
 
         assigned_id = player_assigner.assign_ball_to_player(all_actors, ball_bbox)
 
+        # --- 3) eventuell niemand klar genug in der Nähe ---
         if assigned_id == -1:
-            team_ball_control.append(team_ball_control[-1] if team_ball_control else 0)
+            team_ball_control.append(0)
             continue
 
+        # --- 4) Team des „rohen“ Besitzers bestimmen + has_ball setzen ---
         if assigned_id in player_track:
             player_track[assigned_id]['has_ball'] = True
-            team = player_track[assigned_id]['team']
+            raw_team = player_track[assigned_id]['team']
         else:
             gk_track[assigned_id]['has_ball'] = True
-            team = gk_track[assigned_id]['team']
+            raw_team = gk_track[assigned_id]['team']
 
-        team_ball_control.append(team)
+        if raw_team not in (1, 2):
+            team_ball_control.append(0)
+            continue
+
+        # --- 5) Hysterese: Wechsel des Ballbesitz-Teams glätten ---
+        if last_team == 0:
+            # Noch kein offizieller Besitz -> direkt übernehmen
+            last_team = raw_team
+            candidate_team = None
+            candidate_count = 0
+        else:
+            if raw_team == last_team:
+                # Bestätigung des aktuellen Teams
+                candidate_team = None
+                candidate_count = 0
+            else:
+                # anderes Team versucht zu übernehmen
+                if candidate_team == raw_team:
+                    candidate_count += 1
+                else:
+                    candidate_team = raw_team
+                    candidate_count = 1
+
+                # Wenn der Kandidat mehrere Frames hintereinander vorne ist -> Besitzwechsel
+                if candidate_count >= min_switch_frames:
+                    last_team = raw_team
+                    candidate_team = None
+                    candidate_count = 0
+
+        # last_team ist das geglättete Anzeige-Team
+        team_ball_control.append(last_team)
 
     team_ball_control = np.array(team_ball_control)
     
@@ -195,7 +234,7 @@ def main():
     output_video_frames = tracker.draw_annotations(video_frames, tracks, team_ball_control)
 
     # Save Video
-    save_video(output_video_frames, 'output_video_match/output_video_w.avi')
+    save_video(output_video_frames, 'output_video_match/output_video_k.avi')
 
 if __name__ == '__main__':
     main()
