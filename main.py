@@ -31,17 +31,27 @@ def main():
     # Assign Player Team
     team_assigner = TeamAssigner()
     team_assigner.assign_team_color(video_frames, tracks)
+    team_assigner.assign_referee_color(video_frames, tracks)
+    team_assigner.save_color_debug("output_video_match/color_debug.png")
     
     for frame_number, player_track in enumerate(tracks['players']):
-        for player_id, track in player_track.items():
+        # list(...), damit wir während des Iterierens löschen dürfen
+        for player_id, track in list(player_track.items()):
             team = team_assigner.get_player_team(
                 video_frames[frame_number],
                 track['bbox'],
                 player_id
             )
+
+            if team == 0:
+                # ➜ Spieler-Track als Schiri behandeln
+                tracks['referees'][frame_number][player_id] = track
+                del tracks['players'][frame_number][player_id]
+                continue
+
+            # normaler Spieler: Team & Farbe setzen
             tracks['players'][frame_number][player_id]['team'] = team
             tracks['players'][frame_number][player_id]['team_color'] = team_assigner.team_colors[team]
-
 
     # Draw Output
     ## Draw object tracks
