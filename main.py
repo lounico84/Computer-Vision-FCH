@@ -5,7 +5,7 @@ from team_assigner import TeamAssigner
 
 def main():
     # Read Video
-    video_frames = read_video('input_videos_match/Test/wiesendangen_test_clip_short.mp4')
+    video_frames = read_video('input_videos_match/Test/kuesnacht_test_clip.MP4')
 
     # Initialize Tracker
     tracker =  Tracker('yolo_training/models/fifth_model/run1/weights/best.pt')
@@ -54,7 +54,7 @@ def main():
     for player_id, obs in team_assigner.player_obs_counts.items():
         votes = team_assigner.ref_vote_counts.get(player_id, 0)
 
-        # Bedingung: mind. 3 Ref-Votes und zugleich in >= 60% der beobachteten Frames Ref-ähnlich
+        # Bedingung: mind. 7 Ref-Votes und zugleich in >= 80s% der beobachteten Frames Ref-ähnlich
         if (
             team_assigner.referee_color is not None
             and obs >= min_observations

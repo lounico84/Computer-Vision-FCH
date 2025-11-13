@@ -20,7 +20,6 @@ class Tracker:
             detections_batch = self.model.track(
                 frames[i:i+batch_size],
                 conf=0.1,
-                #device='mps'
                 )
             detections += detections_batch
         return detections
