@@ -30,9 +30,9 @@ def load_video_and_tracks(settings: Settings):
 
     return video_frames, tracker, tracks
 
-
+# Draw visual annotations one each frame and save the final output video
 def render_and_save_video(video_frames, tracks, team_ball_control, tracker, settings: Settings):
-    """Draw visual annotations one each frame and save the final output video"""
+    
     # Add visual overlays to each frame
     output_frames = tracker.draw_annotations(video_frames, tracks, team_ball_control)
 
