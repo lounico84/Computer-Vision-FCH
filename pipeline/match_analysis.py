@@ -4,9 +4,8 @@ from pipeline.team_pipeline import assign_teams, assign_goalkeepers_to_teams
 from pipeline.ball_pipeline import compute_team_ball_control
 from pipeline.analytics_pipeline import export_analytics
 
-
+# Main orchestration function for the full match analysis pipeline
 def run_match_analysis(settings: Settings | None = None):
-    """Main orchestration function for the full match analysis pipeline"""
 
     # Use default settings object if none is provided
     if settings is None:

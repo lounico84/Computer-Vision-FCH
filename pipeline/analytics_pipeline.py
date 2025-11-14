@@ -1,9 +1,9 @@
 from config import Settings
 from analytics import export_frame_csv1
 
-
+# Export frame-level analytics to a csv file
 def export_analytics(tracks, team_ball_control, settings: Settings):
-    """Export frame-level analytics to a csv file"""
+
     export_frame_csv1(
         tracks=tracks,
         team_ball_control=team_ball_control,

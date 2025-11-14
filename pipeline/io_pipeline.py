@@ -2,9 +2,9 @@ from config import Settings
 from utils import read_video, save_video
 from trackers import Tracker
 
-
+# Load the input video and generate or load object tracking data
 def load_video_and_tracks(settings: Settings):
-    """Load the input video and generate or load object tracking data"""
+
     paths = settings.paths
     tracking_cfg = settings.tracking
 

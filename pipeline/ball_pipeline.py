@@ -3,9 +3,9 @@ import numpy as np
 from config import Settings
 from player_ball_assigner import PlayerBallAssigner
 
-
+# Compute team ball posession over all frames
 def compute_team_ball_control(tracks, settings: Settings):
-    """Compute team ball posession over all frames"""
+
     player_assigner = PlayerBallAssigner()
     ball_cfg = settings.ball_control
 
