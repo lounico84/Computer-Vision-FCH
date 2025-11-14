@@ -1,0 +1,38 @@
+import numpy as np
+import cv2
+import os
+
+# Projekt-Root und Pfade
+PROJECT_ROOT = "project/Computer-Vision-FCH"
+H_NPY = os.path.join(PROJECT_ROOT, "calibration", "aio_homography_cam_to_map.npy")
+PITCH_IMG = os.path.join(PROJECT_ROOT, "calibration", "fch_fussballfeld.jpg")
+OUT_NPZ = os.path.join(PROJECT_ROOT, "calibration", "homography.npz")
+
+# Echte Feldgröße in Metern
+FIELD_LENGTH_M = 100.0
+FIELD_WIDTH_M  = 60.0
+
+# 1) H in Pitch-Pixel laden
+H_px = np.load(H_NPY)
+
+# 2) Pitch-Bild laden, um Pixelgröße zu bekommen
+img = cv2.imread(PITCH_IMG)
+if img is None:
+    raise FileNotFoundError(f"Pitch-Bild nicht gefunden: {PITCH_IMG}")
+h, w = img.shape[:2]
+print("Pitch-Bildgröße:", w, "x", h)
+
+# 3) Skalierung: Pitch-Pixel -> Meter
+S = np.array([
+    [FIELD_LENGTH_M / w, 0.0,                 0.0],
+    [0.0,                FIELD_WIDTH_M / h,   0.0],
+    [0.0,                0.0,                 1.0],
+], dtype=np.float32)
+
+# 4) Gesamthomographie: Kamera-Pixel -> Meter
+H_m = S @ H_px
+H_inv = np.linalg.inv(H_m)
+
+np.savez(OUT_NPZ, H=H_m, H_inv=H_inv)
+print("Neue Homographie in Metern gespeichert unter:", OUT_NPZ)
+print("H_m =\n", H_m)

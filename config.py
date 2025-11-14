@@ -6,9 +6,9 @@ from pathlib import Path
 class PathConfig:
     model_path: Path = Path("yolo_training/models/fifth_model/run1/weights/best.pt")
     input_video: Path = Path("input_videos_match/Test/kuesnacht_test_clip2.MP4")
-    tracks_stub: Path = Path("project/Computer-Vision-FCH/stubs/track_stubs_w.pkl")
-    output_video: Path = Path("output_video_match/output_video_w.avi")
-    color_debug_image: Path = Path("output_video_match/color_debug_w.png")
+    tracks_stub: Path = Path("project/Computer-Vision-FCH/stubs/track_stubs_k.pkl")
+    output_video: Path = Path("output_video_match/output_video_k.avi")
+    color_debug_image: Path = Path("output_video_match/color_debug_k.png")
     frame_events_csv: Path = Path("project/Computer-Vision-FCH/analytics/frame_events.csv")
     pass_map_team1: Path = Path("project/Computer-Vision-FCH/analytics/pass_map_team1.png")
     pass_map_team2: Path = Path("project/Computer-Vision-FCH/analytics/pass_map_team2.png")

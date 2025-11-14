@@ -7,6 +7,7 @@ import numpy as np
 # ===========================================
 VIDEO_FILE   = "input_videos_match/Test/kuesnacht_test_clip2.MP4"              # GoPro-Video
 PITCH_IMG    = "project/Computer-Vision-FCH/calibration/fch_fussballfeld.jpg"                # Top-Down-Feld
+H_PIPE       = "project/Computer-Vision-FCH/calibration/homography.npz"
 CALIB_FILE   = "project/Computer-Vision-FCH/calibration/aio_gopro_calib_approx.npz"       # wird erzeugt
 H_FILE       = "project/Computer-Vision-FCH/calibration/aio_homography_cam_to_map.npy"    # wird erzeugt
 WARP_OUT     = "project/Computer-Vision-FCH/calibration/aio_warped_frame_to_pitch.png"    # wird erzeugt
@@ -14,6 +15,14 @@ WARP_OUT     = "project/Computer-Vision-FCH/calibration/aio_warped_frame_to_pitc
 # ===========================================
 #  Hilfsfunktionen
 # ===========================================
+def export_homography_for_pipeline():
+
+    H = np.load(H_FILE)
+    H_inv = np.linalg.inv(H)
+
+    np.savez(H_PIPE, H=H, H_inv=H_inv)
+
+
 def get_first_frame(video_path):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():

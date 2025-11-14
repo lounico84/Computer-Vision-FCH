@@ -1,8 +1,7 @@
-# analytics/pass_maps.py
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import cv2
 
 
 def detect_passes(
@@ -113,13 +112,20 @@ def detect_passes(
 
         last_speed = speed
         last_team_control = team_ctrl
-
+    print(f"[pass_maps] detect_passes: {len(passes)} Pässe erkannt.")
     return passes
 
-
-def _plot_pass_map(passes, team, pitch_length, pitch_width, out_path):
+def _plot_pass_map(
+    passes,
+    team,
+    pitch_length,
+    pitch_width,
+    out_path,
+    pitch_image_path=None,
+):
     """
     Zeichnet eine Pass-Map für ein bestimmtes Team:
+    - Hintergrund: Spielfeldbild (optional)
     - blaue Linien = angekommene Pässe
     - rote Linien  = Fehlpässe
     """
@@ -129,19 +135,36 @@ def _plot_pass_map(passes, team, pitch_length, pitch_width, out_path):
 
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    # Spielfeldrahmen
+    # Achsen auf Feldgrösse setzen
     ax.set_xlim(0, pitch_length)
     ax.set_ylim(0, pitch_width)
     ax.set_aspect("equal")
-    ax.invert_yaxis()  # y=0 oben, y=68 unten (wie im Bild)
+    ax.invert_yaxis()  # y=0 oben, y=pitch_width unten
 
-    # Randlinien zeichnen
-    ax.plot(
-        [0, pitch_length, pitch_length, 0, 0],
-        [0, 0, pitch_width, pitch_width, 0],
-        color="black",
-        linewidth=1,
-    )
+    # ===== Hintergrundbild zeichnen (falls angegeben) =====
+    if pitch_image_path is not None:
+        img = cv2.imread(pitch_image_path)
+        if img is None:
+            print(f"[pass_maps] Warnung: Pitch-Image nicht gefunden: {pitch_image_path}")
+        else:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            # extent: [xmin, xmax, ymin, ymax]
+            # wegen invert_yaxis() setzen wir ymin=pitch_width, ymax=0
+            ax.imshow(
+                img,
+                extent=[0, pitch_length, pitch_width, 0],
+                interpolation="bilinear",
+            )
+    else:
+        # Falls kein Bild: einfachen Rahmen zeichnen
+        ax.plot(
+            [0, pitch_length, pitch_length, 0, 0],
+            [0, 0, pitch_width, pitch_width, 0],
+            color="black",
+            linewidth=1,
+        )
+
+    # ===== Pässe einzeichnen =====
 
     # Angekommene Pässe: blau
     for p in completed:
@@ -176,11 +199,12 @@ def create_pass_maps_from_csv(
     csv_path,
     out_path_team1,
     out_path_team2,
-    pitch_length=105.0,
-    pitch_width=68.0,
+    pitch_length=100.0,
+    pitch_width=60.0,
     fps=60,
     speed_threshold=5.0,
     min_distance=3.0,
+    pitch_image_path="project/Computer-Vision-FCH/calibration/fch_fussballfeld.jpg",
 ):
     df = pd.read_csv(csv_path)
 
@@ -210,6 +234,7 @@ def create_pass_maps_from_csv(
         pitch_length=pitch_length,
         pitch_width=pitch_width,
         out_path=out_path_team1,
+        pitch_image_path=pitch_image_path,
     )
     _plot_pass_map(
         passes,
@@ -217,4 +242,5 @@ def create_pass_maps_from_csv(
         pitch_length=pitch_length,
         pitch_width=pitch_width,
         out_path=out_path_team2,
+        pitch_image_path=pitch_image_path,
     )
