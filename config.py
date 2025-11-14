@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
+# Centralized file path configuration
 @dataclass
 class PathConfig:
     model_path: Path = Path("yolo_training/models/fifth_model/run1/weights/best.pt")
@@ -11,26 +11,26 @@ class PathConfig:
     color_debug_image: Path = Path("output_video_match/color_debug_k.png")
     frame_events_csv: Path = Path("project/Computer-Vision-FCH/analytics/frame_events.csv")
 
-
+# Configuration for model inference and tracking behavior
 @dataclass
 class TrackingConfig:
     fps: int = 60
     read_tracks_from_stub: bool = True
     max_ball_interpolation_gap: int = 20
 
-
+# Thresholds used to classify whether a player is actually a referee
 @dataclass
 class RefereeDecisionConfig:
     min_votes: int = 7
     min_ratio: float = 0.8
     min_observations: int = 10
 
-
+# Configuration for smoothing ball possession decisions
 @dataclass
 class BallControlConfig:
     min_switch_frames: int = 5  # Hysterese für Teamwechsel
 
-
+# Global application settings
 @dataclass
 class Settings:
     paths: PathConfig = field(default_factory=PathConfig)
