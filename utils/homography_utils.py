@@ -2,8 +2,10 @@ import os
 import numpy as np
 import cv2
 
-# Muss zum Pfad in homography_calibration.py passen
-CALIBRATION_FILE = "project/Computer-Vision-FCH/calibration/homography.npz"
+# Pfad relativ zum Projekt-Root ermitteln
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+CALIBRATION_FILE = os.path.join(PROJECT_ROOT, "calibration", "homography.npz")
 
 _H = None
 _H_inv = None
@@ -58,7 +60,6 @@ def pixel_to_pitch(x: float, y: float):
 def pitch_to_pixel(X: float, Y: float):
     """
     Transformiert einen Spielfeldpunkt (Meter) in Bildkoordinaten (Pixel).
-    Praktisch, wenn du z.B. Strafraum-Ecken einzeichnen willst.
 
     Rückgabe: (x, y) in Pixel
     Falls keine Homographie vorhanden ist: (np.nan, np.nan)
