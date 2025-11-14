@@ -5,6 +5,7 @@ from utils import get_center_of_bbox
 
 
 def export_frame_csv1(tracks, team_ball_control, fps, output_path):
+    """Export a csv where each row represents one video frame"""
     num_frames = len(tracks["players"])
     rows = []
 
@@ -78,4 +79,4 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
     # Convert list of dicts to a dataframe and save to disk
     df = pd.DataFrame(rows)
     df.to_csv(output_path, index=False)
-    print(f"[CSV Export] Saved frame-level data to: {output_path}")
+    print(f"Saved data to: {output_path}")
