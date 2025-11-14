@@ -9,9 +9,10 @@ from utils import get_bbox_width, get_center_of_bbox
 
 class Tracker:
     def __init__(self, model_path):
-        self.model = YOLO(model_path)
-        self.tracker = sv.ByteTrack()
+        self.model = YOLO(model_path) # load YOLO model from the given path
+        self.tracker = sv.ByteTrack() # initialize ByteTrack tracker from supervision
     
+    # Interpolate missing ball positions over time
     def interpolate_ball_positions(self, ball_positions, max_gap=20):
         raw = []
         for x in ball_positions:
@@ -22,17 +23,20 @@ class Tracker:
 
         df = pd.DataFrame(raw, columns=['x1','y1','x2','y2'])
 
-        # nur Lücken bis max_gap interpolieren
+        # # Interpolate only gaps up to max_gap frames (for longer gaps keep NaN)
         df = df.interpolate(limit=max_gap, limit_direction="both")
 
         ball_tracks = []
         for bbox in df.to_numpy().tolist():
             if any(np.isnan(bbox)):
-                ball_tracks.append({})  # kein Ball in diesem Frame
+                # No reliable ball position in this frame
+                ball_tracks.append({})
             else:
+                # Use track ID 1 as the ball
                 ball_tracks.append({1: {"bbox": bbox}})
         return ball_tracks
 
+    # Run YOLO+tracking on the video in batches
     def detect_frames(self, frames):
         batch_size = 20
         detections = []
@@ -42,8 +46,11 @@ class Tracker:
                 conf=0.1,
                 )
             detections += detections_batch
+        
+        # Returns a list of detection/tracking results, one per frame
         return detections
 
+    # Get tracked objects (players, referees, goalkeepers, ball) for all frames
     def get_object_tracks(self, frames, read_from_stub=False, stub_path=None):
 
         # Check if pickle file exists to not run yolo again for developement
@@ -51,9 +58,12 @@ class Tracker:
             with open(stub_path,'rb') as f:
                 tracks = pickle.load(f)
             return tracks
-
+        
+        # Run detection + tracking over the full video
         detections = self.detect_frames(frames)
 
+        # Initialize track data structure
+        # Each list has one dict per frame
         # Contains bbox, class and tracker
         tracks={
             "players":[],
@@ -64,9 +74,10 @@ class Tracker:
 
         for frame_num, detection in enumerate(detections):
             cls_names = detection.names
+            # Invert mapping: name to class_id
             cls_names_inv = {v:k for k,v in cls_names.items()}
 
-            # Convert to Supervision Detection format
+            # Convert to Supervision detection format
             detection_supervision = sv.Detections.from_ultralytics(detection)
 
             # Convert Goalkeeper to Player object
@@ -76,14 +87,16 @@ class Tracker:
                     detection_supervision.class_id[object_ind] = cls_names_inv["player"]
             '''
 
-            # Track Objects
+            # Track Objects with ByteTrack to get consistent track IDs over time
             detection_with_tracks = self.tracker.update_with_detections(detection_supervision)
 
+            # Prepare empty containers for this frame
             tracks["players"].append({})
             tracks["referees"].append({})
             tracks["goalkeepers"].append({})
             tracks["ball"].append({})
 
+            # Add tracked objects (players, referees, goalkeepers)
             for frame_detection in detection_with_tracks:
                 bbox = frame_detection[0].tolist()
                 cls_id = frame_detection[3]
@@ -98,6 +111,7 @@ class Tracker:
                 if cls_id == cls_names_inv['goalkeeper']:
                     tracks["goalkeepers"][frame_num][track_id] = {"bbox":bbox}
 
+            # Add ball detections (always ID=1)
             for frame_detection in detection_supervision:
                 bbox = frame_detection[0]
                 cls_id = frame_detection[3]
@@ -105,18 +119,21 @@ class Tracker:
                 if cls_id == cls_names_inv['ball']:
                     tracks["ball"][frame_num][1] = {"bbox":bbox}
 
+        # Store the tracks in a pickle file for faster debugging
         if stub_path is not None:
             with open(stub_path,'wb') as f:
                 pickle.dump(tracks,f)
 
         return tracks
     
+    # Draw an ellipse under a player/referee/goalkeeper
     def draw_ellipse(self, frame, bbox, color, track_id=None):
         y2 = int(bbox[3])
 
         x_center, _ = get_center_of_bbox(bbox)
         width = get_bbox_width(bbox)
 
+        # Draw the ellipse at the player's feet
         cv2.ellipse(
             frame,
             center=(x_center,y2),
@@ -129,6 +146,7 @@ class Tracker:
             lineType=cv2.LINE_4
         )
 
+        # Create a small rectangle above the ellipse for the track ID
         rectangle_width = 40
         rectangle_height = 20
         x1_rect = x_center - rectangle_width//2
@@ -142,11 +160,12 @@ class Tracker:
                           (int(x2_rect),int(y2_rect)),
                           color,
                           cv2.FILLED)
-
+            # Adjust text if ID is > 99
             x1_text = x1_rect+12
             if track_id > 99:
                 x1_text -= 10
             
+            # Put the track ID number inside the rectangle
             cv2.putText(
                 frame,
                 f"{track_id}",
@@ -159,6 +178,7 @@ class Tracker:
 
         return frame
     
+    # Draw a small triangle above the bounding box
     def draw_triangle(self, frame, bbox, color):
         y = int(bbox[1])
         x,_ = get_center_of_bbox(bbox)
@@ -173,6 +193,7 @@ class Tracker:
 
         return frame
 
+    # Draw a small overlay for ball position
     def draw_team_ball_control(self, frame, frame_num, team_ball_control):
         # Draw a semi-transparent rectangle
         overlay = frame.copy()
@@ -180,11 +201,11 @@ class Tracker:
         alpha = 0.4
         cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
 
-        # bis inkl. aktuellem Frame
+        # Use data from frame 0 up to and including the current frame
         team_ball_control_till_frame = team_ball_control[:frame_num + 1]
 
-        # Nur Frames zählen, in denen wirklich Team 1 oder 2 Ballbesitz hat
-        # (0 oder andere Werte bedeuten: kein klarer Besitz)
+        # Only consider frames where Team 1 or Team 2 actually had possession
+        # (0 or other values mean: no clear control)
         mask_1 = (team_ball_control_till_frame == 1)
         mask_2 = (team_ball_control_till_frame == 2)
 
@@ -193,7 +214,7 @@ class Tracker:
         denom = team_1_num_frames + team_2_num_frames
 
         if denom == 0:
-            # Bisher hatte noch niemand Ballbesitz → 0% / 0%
+             # Start with no ball control
             team_1 = 0.0
             team_2 = 0.0
         else:
@@ -222,6 +243,7 @@ class Tracker:
 
         return frame
     
+    # Draw all annotations (players, referees, goalkeepers, ball, and team ball control stats) for every frame in the video.
     def draw_annotations(self, video_frames, tracks, team_ball_control):
         output_video_frame = []
         for frame_num, frame in enumerate(video_frames):
@@ -238,6 +260,7 @@ class Tracker:
                 color = (0,255,255) if raw is None else tuple(int(x) for x in np.asarray(raw).tolist())
                 frame = self.draw_ellipse(frame, player["bbox"], color, track_id)
 
+                # Highlight players who currently have the ball
                 if player.get('has_ball', False):
                     frame = self.draw_triangle(frame, player['bbox'], (0,0,255))
 
@@ -248,7 +271,8 @@ class Tracker:
             # Draw Goalkeepers
             for track_id, goalkeeper in goalkeeper_dict.items():
                 frame = self.draw_ellipse(frame, goalkeeper["bbox"], (255,0,0), track_id)
-
+                
+                # Highlight goalkeeper who currently has the ball
                 if goalkeeper.get('has_ball', False):
                     frame = self.draw_triangle(frame, goalkeeper['bbox'], (0,0,255))
             
@@ -261,4 +285,5 @@ class Tracker:
 
             output_video_frame.append(frame)
         
+        # Returns a list of annotated frames to be written to a video file
         return output_video_frame
