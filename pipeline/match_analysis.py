@@ -6,21 +6,24 @@ from pipeline.analytics_pipeline import export_analytics
 
 
 def run_match_analysis(settings: Settings | None = None):
+    """Main orchestration function for the full match analysis pipeline"""
+
+    # Use default settings object if none is provided
     if settings is None:
         settings = Settings()
 
-    # Video + Tracks
+    # Load video and tracking information
     video_frames, tracker, tracks = load_video_and_tracks(settings)
 
-    # Teams / Ref / Keeper
+    # Team classification and goalkeeper assignment
     tracks, team_assigner = assign_teams(video_frames, tracks, settings)
     tracks = assign_goalkeepers_to_teams(tracks, team_assigner)
 
-    # Team-Ball Control
+    # Compute team ball control over all frames
     team_ball_control = compute_team_ball_control(tracks, settings)
 
-    # Analytics
+    # Export analytics
     export_analytics(tracks, team_ball_control, settings)
 
-    # Visualisation
+    # Draw annotations and save output video
     render_and_save_video(video_frames, tracks, team_ball_control, tracker, settings)
