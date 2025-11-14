@@ -5,8 +5,6 @@ import cv2
 import numpy as np
 import pandas as pd
 import os
-import sys
-sys.path.append('../')
 from utils import get_bbox_width, get_center_of_bbox
 
 class Tracker:
