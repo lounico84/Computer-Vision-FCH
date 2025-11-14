@@ -5,14 +5,6 @@ from utils import get_center_of_bbox
 
 
 def export_frame_csv1(tracks, team_ball_control, fps, output_path):
-    """
-    Exportiert pro Frame eine Zeile mit:
-    - Frameindex & Zeit
-    - Ball-Position & Sichtbarkeit
-    - Ballbesitzer (ID, Rolle, Team)
-    - geglättetem Team-Ballbesitz
-    - Anzahl sichtbarer Spieler pro Team
-    """
     num_frames = len(tracks["players"])
     rows = []
 
@@ -21,24 +13,25 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
         gks     = tracks["goalkeepers"][frame_idx]
         ball    = tracks["ball"][frame_idx]
 
-        # Zeit
+        # Convert frame indey into time in seconds
         time_sec = frame_idx / float(fps)
 
-        # Ball sichtbar + Position
+        # Check if ball is detected in the current frame
         if 1 in ball:
             ball_visible = 1
             ball_bbox = ball[1]["bbox"]
+            # Get the (x,y) center of point of the ball's bounding box
             ball_x, ball_y = get_center_of_bbox(ball_bbox)
         else:
             ball_visible = 0
             ball_x, ball_y = np.nan, np.nan
 
-        # Besitzer (Player oder Keeper) finden
+        # Default values if no owner is found
         owner_id = -1
         owner_role = "none"
         owner_team = 0
 
-        # Spieler zuerst
+        # First check if any field player has the ball
         for pid, pdata in players.items():
             if pdata.get("has_ball", False):
                 owner_id = pid
@@ -46,7 +39,7 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
                 owner_team = pdata.get("team", 0)
                 break
 
-        # Wenn kein Spieler, dann Keeper checken
+        # If no player owns the ball, check goalkeepers
         if owner_id == -1:
             for gid, gdata in gks.items():
                 if gdata.get("has_ball", False):
@@ -55,16 +48,17 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
                     owner_team = gdata.get("team", 0)
                     break
 
-        # geglätteter Team-Ballbesitz
+        # Use smoothed ball control value for this frame
         if frame_idx < len(team_ball_control):
             team_control = int(team_ball_control[frame_idx])
         else:
-            team_control = 0
+            team_control = 0 # safety fallback
 
-        # Anzahl Spieler pro Team im Frame
+        # Count how many players per team are visible in this frame
         team1_players = sum(1 for p in players.values() if p.get("team") == 1)
         team2_players = sum(1 for p in players.values() if p.get("team") == 2)
 
+        # Collect all values into a structured row
         rows.append(
             {
                 "frame": frame_idx,
@@ -81,6 +75,7 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
             }
         )
 
+    # Convert list of dicts to a dataframe and save to disk
     df = pd.DataFrame(rows)
     df.to_csv(output_path, index=False)
     print(f"[CSV Export] Saved frame-level data to: {output_path}")
