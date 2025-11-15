@@ -204,7 +204,7 @@ def create_pass_maps_from_csv(
     fps=60,
     speed_threshold=5.0,
     min_distance=3.0,
-    pitch_image_path="project/Computer-Vision-FCH/calibration/fch_fussballfeld.jpg",
+    pitch_image_path=None,
 ):
     df = pd.read_csv(csv_path)
 
