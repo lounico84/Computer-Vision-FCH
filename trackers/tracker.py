@@ -66,91 +66,94 @@ class Tracker:
     # Get tracked objects (players, referees, goalkeepers, ball) for all frames
     def get_object_tracks(self, frames, read_from_stub=False, stub_path=None):
 
+        tracks = None
+
         # Check if pickle file exists to not run yolo again for developement
         if read_from_stub and stub_path is not None and os.path.exists(stub_path):
             with open(stub_path,'rb') as f:
                 tracks = pickle.load(f)
-            return tracks
+
+        else:
+            # Run detection + tracking over the full video
+            detections = self.detect_frames(frames)
+
+            # Initialize track data structure
+            # Each list has one dict per frame
+            # Contains bbox, class and tracker
+            tracks={
+                "players":[],
+                "referees":[],
+                "goalkeepers":[],
+                "ball":[]
+            }
+
+            for frame_num, detection in enumerate(detections):
+                cls_names = detection.names
+                # Invert mapping: name to class_id
+                cls_names_inv = {v:k for k,v in cls_names.items()}
+
+                # Convert to Supervision detection format
+                detection_supervision = sv.Detections.from_ultralytics(detection)
+
+                # Detect balls with higher confidence
+                cls_names = detection.names
+                cls_names_inv = {v: k for k, v in cls_names.items()}
+                ball_class_id = cls_names_inv["ball"]
+
+                ball_conf_min = 0.30
+
+                mask_keep = []
+                for cls_id, conf in zip(detection_supervision.class_id,
+                                        detection_supervision.confidence):
+                    if cls_id == ball_class_id and conf < ball_conf_min:
+                        mask_keep.append(False)
+                    else:
+                        mask_keep.append(True)
         
-        # Run detection + tracking over the full video
-        detections = self.detect_frames(frames)
+                detection_supervision = detection_supervision[mask_keep]
 
-        # Initialize track data structure
-        # Each list has one dict per frame
-        # Contains bbox, class and tracker
-        tracks={
-            "players":[],
-            "referees":[],
-            "goalkeepers":[],
-            "ball":[]
-        }
+                # Track Objects with ByteTrack to get consistent track IDs over time
+                detection_with_tracks = self.tracker.update_with_detections(detection_supervision)
 
-        for frame_num, detection in enumerate(detections):
-            cls_names = detection.names
-            # Invert mapping: name to class_id
-            cls_names_inv = {v:k for k,v in cls_names.items()}
+                # Prepare empty containers for this frame
+                tracks["players"].append({})
+                tracks["referees"].append({})
+                tracks["goalkeepers"].append({})
+                tracks["ball"].append({})
 
-            # Convert to Supervision detection format
-            detection_supervision = sv.Detections.from_ultralytics(detection)
+                # Add tracked objects (players, referees, goalkeepers)
+                for frame_detection in detection_with_tracks:
+                    bbox = frame_detection[0].tolist()
+                    cls_id = frame_detection[3]
+                    track_id = frame_detection[4]
 
-            # Detect balls with higher confidence
-            cls_names = detection.names
-            cls_names_inv = {v: k for k, v in cls_names.items()}
-            ball_class_id = cls_names_inv["ball"]
+                    if cls_id == cls_names_inv['player']:
+                        tracks["players"][frame_num][track_id] = {"bbox":bbox}
 
-            ball_conf_min = 0.30
+                    if cls_id == cls_names_inv['referee']:
+                        tracks["referees"][frame_num][track_id] = {"bbox":bbox}
+                    
+                    if cls_id == cls_names_inv['goalkeeper']:
+                        tracks["goalkeepers"][frame_num][track_id] = {"bbox":bbox}
 
-            mask_keep = []
-            for cls_id, conf in zip(detection_supervision.class_id,
-                                    detection_supervision.confidence):
-                if cls_id == ball_class_id and conf < ball_conf_min:
-                    mask_keep.append(False)
-                else:
-                    mask_keep.append(True)
+                # Add ball detections (always ID=1)
+                for frame_detection in detection_supervision:
+                    bbox = frame_detection[0]
+                    cls_id = frame_detection[3]
 
-            detection_supervision = detection_supervision[mask_keep]
-
-            # Convert Goalkeeper to Player object
-            '''
-            for object_ind, class_id in enumerate(detection_supervision.class_id):
-                if cls_names[class_id] == "goalkeeper":
-                    detection_supervision.class_id[object_ind] = cls_names_inv["player"]
-            '''
-
-            # Track Objects with ByteTrack to get consistent track IDs over time
-            detection_with_tracks = self.tracker.update_with_detections(detection_supervision)
-
-            # Prepare empty containers for this frame
-            tracks["players"].append({})
-            tracks["referees"].append({})
-            tracks["goalkeepers"].append({})
-            tracks["ball"].append({})
-
-            # Add tracked objects (players, referees, goalkeepers)
-            for frame_detection in detection_with_tracks:
-                bbox = frame_detection[0].tolist()
-                cls_id = frame_detection[3]
-                track_id = frame_detection[4]
-
-                if cls_id == cls_names_inv['player']:
-                    tracks["players"][frame_num][track_id] = {"bbox":bbox}
-
-                if cls_id == cls_names_inv['referee']:
-                    tracks["referees"][frame_num][track_id] = {"bbox":bbox}
-                
-                if cls_id == cls_names_inv['goalkeeper']:
-                    tracks["goalkeepers"][frame_num][track_id] = {"bbox":bbox}
-
-            # Add ball detections (always ID=1)
-            for frame_detection in detection_supervision:
-                bbox = frame_detection[0]
-                cls_id = frame_detection[3]
-
-                if cls_id == cls_names_inv['ball']:
-                    tracks["ball"][frame_num][1] = {"bbox":bbox}
+                    if cls_id == cls_names_inv['ball']:
+                        tracks["ball"][frame_num][1] = {"bbox":bbox}
+        
+        # NEW: stabilize roles per track_id across the whole video
+        tracks = self._stabilize_roles_per_track(
+            tracks,
+            min_observations=5,
+            min_ratio=0.6,
+        )
 
         # Store the tracks in a pickle file for faster debugging
-        if stub_path is not None:
+        # Only save when we actually computed them, not when reading from stub
+        if stub_path is not None and not read_from_stub:
             with open(stub_path,'wb') as f:
                 pickle.dump(tracks,f)
 
@@ -317,3 +320,85 @@ class Tracker:
         
         # Returns a list of annotated frames to be written to a video file
         return output_video_frame
+    
+    # Stabalizes track_id: every track_id is assigned to one role player, goalkeeper or referee
+    def _stabilize_roles_per_track(
+        self,
+        tracks: dict,
+        min_observations: int = 5,
+        min_ratio: float = 0.6,
+    ) -> dict:
+
+        # Falls keine Daten o.ä. – einfach unverändert zurückgeben
+        if not tracks or "players" not in tracks:
+            return tracks
+
+        num_frames = len(tracks["players"])
+        if num_frames == 0:
+            return tracks
+
+        # 1) Rollen-Votes pro track_id sammeln
+        role_counts = {}  # track_id -> {"player": n, "referee": n, "goalkeeper": n}
+
+        for frame_idx in range(num_frames):
+            # players
+            for tid in tracks["players"][frame_idx].keys():
+                if tid not in role_counts:
+                    role_counts[tid] = {"player": 0, "referee": 0, "goalkeeper": 0}
+                role_counts[tid]["player"] += 1
+
+            # referees
+            for tid in tracks["referees"][frame_idx].keys():
+                if tid not in role_counts:
+                    role_counts[tid] = {"player": 0, "referee": 0, "goalkeeper": 0}
+                role_counts[tid]["referee"] += 1
+
+            # goalkeepers
+            for tid in tracks["goalkeepers"][frame_idx].keys():
+                if tid not in role_counts:
+                    role_counts[tid] = {"player": 0, "referee": 0, "goalkeeper": 0}
+                role_counts[tid]["goalkeeper"] += 1
+
+        # 2) Für jede track_id eine Mehrheits-Rolle bestimmen
+        global_role = {}  # track_id -> "player" / "referee" / "goalkeeper"
+
+        for tid, counts in role_counts.items():
+            total = counts["player"] + counts["referee"] + counts["goalkeeper"]
+            if total < min_observations:
+                # zu wenig Info -> keine globale Entscheidung, wir lassen YOLO-Flickern bestehen
+                continue
+
+            # dominante Rolle finden
+            role, count = max(counts.items(), key=lambda kv: kv[1])
+            if count / total >= min_ratio:
+                # klare Mehrheit -> globale Rolle festlegen
+                global_role[tid] = role
+            # else: keine klare Mehrheit -> auch hier nichts erzwingen
+
+        # 3) Neue Track-Struktur mit konsistenten Rollen aufbauen
+        new_tracks = {
+            "players":     [ {} for _ in range(num_frames) ],
+            "referees":    [ {} for _ in range(num_frames) ],
+            "goalkeepers": [ {} for _ in range(num_frames) ],
+        }
+
+        # Ball (und evtl. andere Keys) unverändert übernehmen
+        for key, value in tracks.items():
+            if key not in ("players", "referees", "goalkeepers"):
+                new_tracks[key] = value
+
+        for frame_idx in range(num_frames):
+            for role_name in ("players", "referees", "goalkeepers"):
+                for tid, track in tracks[role_name][frame_idx].items():
+                    # Standard: Rolle so lassen, wie sie in diesem Frame war
+                    base_role = role_name[:-1]  # "players" -> "player", "referees" -> "referee", ...
+                    final_role = global_role.get(tid, base_role)
+
+                    if final_role == "player":
+                        new_tracks["players"][frame_idx][tid] = track
+                    elif final_role == "referee":
+                        new_tracks["referees"][frame_idx][tid] = track
+                    elif final_role == "goalkeeper":
+                        new_tracks["goalkeepers"][frame_idx][tid] = track
+
+        return new_tracks

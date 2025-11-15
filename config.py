@@ -13,11 +13,11 @@ class PathConfig:
     input_video: Path = "input_videos_match/Test/kuesnacht_test_clip2.MP4"
 
     # Output
-    output_video: Path = "output_video_match/output_video_k_new.avi"
+    output_video: Path = "output_video_match/output_video_k.avi"
     color_debug_image: Path = "output_video_match/color_debug.png"
 
     # Stubs
-    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_new.pkl"
+    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k.pkl"
 
     # Analytics
     frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events.csv"
