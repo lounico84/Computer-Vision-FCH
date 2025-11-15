@@ -15,7 +15,7 @@ WARP_OUT     = "project/Computer-Vision-FCH/calibration/aio_warped_frame_to_pitc
 # ===========================================
 #  Hilfsfunktionen
 # ===========================================
-def export_homography_for_pipeline():
+def export_homography_for_pipeline(H_FILE, H_PIPE):
 
     H = np.load(H_FILE)
     H_inv = np.linalg.inv(H)
@@ -284,6 +284,8 @@ def main():
     print(f"- GoPro-Kalibrierung: {CALIB_FILE}")
     print(f"- Homographie:        {H_FILE}")
     print(f"- Gewarptes Bild:     {WARP_OUT}")
+
+    export_homography_for_pipeline(H_FILE, H_PIPE)
 
 if __name__ == "__main__":
     main()

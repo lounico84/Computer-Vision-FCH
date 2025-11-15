@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
+PROJECT_ROOT = Path("project/Computer-Vision-FCH")
+
 # Centralized file path configuration
 @dataclass
 class PathConfig:
