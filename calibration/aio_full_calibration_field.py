@@ -1,16 +1,18 @@
 import math
 import cv2
 import numpy as np
+from config import Settings
+s = Settings()
 
 # ===========================================
 #  Pfade anpassen
 # ===========================================
-VIDEO_FILE   = "input_videos_match/Test/kuesnacht_test_clip2.MP4"              # GoPro-Video
-PITCH_IMG    = "project/Computer-Vision-FCH/calibration/fch_fussballfeld.jpg"                # Top-Down-Feld
-H_PIPE       = "project/Computer-Vision-FCH/calibration/homography.npz"
-CALIB_FILE   = "project/Computer-Vision-FCH/calibration/aio_gopro_calib_approx.npz"       # wird erzeugt
-H_FILE       = "project/Computer-Vision-FCH/calibration/aio_homography_cam_to_map.npy"    # wird erzeugt
-WARP_OUT     = "project/Computer-Vision-FCH/calibration/aio_warped_frame_to_pitch.png"    # wird erzeugt
+VIDEO_FILE = str(s.paths.input_video)           # Match Video
+PITCH_IMG = str(s.paths.pitch_image)            # Top-Down
+H_PIPE    = str(s.paths.homography_npz)
+CALIB_FILE = str(s.paths.calib_file)            # wird erzeugt
+H_FILE     = str(s.paths.homography_npy)        # wird erzeugt
+WARP_OUT   = str(s.paths.warped_frame_output)   # wird erzeugt
 
 # ===========================================
 #  Hilfsfunktionen

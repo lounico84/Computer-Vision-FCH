@@ -1,9 +1,11 @@
 # field_mapping.py
 import numpy as np
 import cv2
+from config import Settings
+s = Settings()
 
-PITCH_IMG_FILE = "project/Computer-Vision-FCH/calibration/fch_fussballfeld.jpg"
-H_FILE         = "project/Computer-Vision-FCH/calibration/aio_homography_cam_to_map.npy"
+PITCH_IMG_FILE = str(s.paths.pitch_image)
+H_FILE         = str(s.paths.homography_npy)
 
 # echte Feldgröße in Metern
 FIELD_LENGTH_M = 100.0
