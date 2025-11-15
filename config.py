@@ -6,14 +6,31 @@ PROJECT_ROOT = Path("project/Computer-Vision-FCH")
 # Centralized file path configuration
 @dataclass
 class PathConfig:
-    model_path: Path = Path("yolo_training/models/fifth_model/run1/weights/best.pt")
-    input_video: Path = Path("input_videos_match/Test/kuesnacht_test_clip2.MP4")
-    tracks_stub: Path = Path("stubs/track_stubs_k.pkl")
-    output_video: Path = Path("output_video_match/output_video_k.avi")
-    color_debug_image: Path = Path("output_video_match/color_debug_k.png")
-    frame_events_csv: Path = Path("project/Computer-Vision-FCH/analytics/frame_events.csv")
-    pass_map_team1: Path = Path("project/Computer-Vision-FCH/analytics/pass_map_team1.png")
-    pass_map_team2: Path = Path("project/Computer-Vision-FCH/analytics/pass_map_team2.png")
+    # Model
+    model_path: Path = "yolo_training/models/fifth_model/run1/weights/best.pt"
+
+    # Videos
+    input_video: Path = "input_videos_match/Test/kuesnacht_test_clip2.MP4"
+    test_input_video: Path = "input_videos_match/Test/wiesendangen_test_clip_short.mp4"
+
+    # Output
+    output_video: Path = "output_video_match/output_video.avi"
+    color_debug_image: Path = "output_video_match/color_debug.png"
+
+    # Stubs
+    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs.pkl"
+
+    # Analytics
+    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events.csv"
+    pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_map_team1.png"
+    pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_map_team2.png"
+
+    # Calibration
+    pitch_image: Path = PROJECT_ROOT / "calibration/fch_fussballfeld.jpg"
+    homography_npy: Path = PROJECT_ROOT / "calibration/aio_homography_cam_to_map.npy"
+    homography_npz: Path = PROJECT_ROOT / "calibration/homography.npz"
+    calib_file: Path = PROJECT_ROOT / "calibration/aio_gopro_calib_approx.npz"
+    warped_frame_output: Path = PROJECT_ROOT / "calibration/aio_warped_frame_to_pitch.png"
 
 # Configuration for model inference and tracking behavior
 @dataclass
