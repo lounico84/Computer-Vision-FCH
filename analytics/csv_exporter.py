@@ -2,6 +2,9 @@ import numpy as np
 import pandas as pd
 
 from utils import get_center_of_bbox, pixel_to_pitch, is_homography_available
+from config import Settings
+settings = Settings()
+analytics_cfg = settings.analytics
 
 # Export a csv where each row represents one video frame
 def export_frame_csv1(tracks, team_ball_control, fps, output_path):
@@ -41,6 +44,16 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
         # Weltkoordinaten in Metern
         if ball_visible and use_world:
             ball_x_m, ball_y_m = pixel_to_pitch(ball_x, ball_y)
+
+            # 1) Falls Ball weit ausserhalb des Spielfeldes -> invalid
+            if (
+                ball_x_m < -analytics_cfg.pitch_margin
+                or ball_x_m > analytics_cfg.pitch_length + analytics_cfg.pitch_margin
+                or ball_y_m < -analytics_cfg.pitch_margin
+                or ball_y_m > analytics_cfg.pitch_width + analytics_cfg.pitch_margin
+            ):
+                ball_x_m, ball_y_m = np.nan, np.nan
+                ball_visible = 0
         else:
             ball_x_m, ball_y_m = np.nan, np.nan
 
@@ -55,7 +68,13 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
             if dt > 0:
                 dx = ball_x_m - last_ball_x_m
                 dy = ball_y_m - last_ball_y_m
-                ball_speed_m_s = (dx * dx + dy * dy) ** 0.5 / dt
+                speed = (dx * dx + dy * dy) ** 0.5 / dt
+
+                # 2) Unplausible High-Speed als NaN markieren
+                if speed > analytics_cfg.max_ball_speed:
+                    ball_speed_m_s = np.nan
+                else:
+                    ball_speed_m_s = speed
             else:
                 ball_speed_m_s = np.nan
         else:

@@ -57,6 +57,8 @@ class AnalyticsConfig:
     pitch_width: float = 60.0     
     pass_speed_threshold: float = 2.0
     pass_min_distance: float = 1.0
+    max_ball_speed: float = 40.0      # 144 km/h
+    pitch_margin: float = 3.0
 
 # Global application settings
 @dataclass
