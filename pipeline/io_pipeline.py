@@ -13,12 +13,18 @@ def load_video_and_tracks(settings: Settings):
 
     # Initialize the tracker with the configured YOLO model
     tracker = Tracker(str(paths.model_path))
-
+    '''
     # Retrieve tracking data (players, goalkeepers, referees, ball)
     tracks = tracker.get_object_tracks(
         video_frames,
         read_from_stub=tracking_cfg.read_tracks_from_stub,
         stub_path=str(paths.tracks_stub), # if tracking results of the video already exists, load them to save computation time
+    )
+    '''
+    tracks = tracker.get_object_tracks_from_video(
+    paths.input_video,
+    read_from_stub=tracking_cfg.read_tracks_from_stub,
+    stub_path=str(paths.tracks_stub),
     )
 
     # Fill in missing ball positions across frames

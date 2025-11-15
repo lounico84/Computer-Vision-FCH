@@ -7,6 +7,9 @@ from pipeline.analytics_pipeline import export_analytics
 # Main orchestration function for the full match analysis pipeline
 def run_match_analysis(settings: Settings | None = None):
 
+    paths = settings.paths
+    tracking = settings.tracking
+
     # Use default settings object if none is provided
     if settings is None:
         settings = Settings()
@@ -20,6 +23,14 @@ def run_match_analysis(settings: Settings | None = None):
 
     # Compute team ball control over all frames
     team_ball_control = compute_team_ball_control(tracks, settings)
+    
+    tracker.draw_annotations_to_video(
+    paths.input_video,
+    tracks,
+    team_ball_control,
+    output_path=paths.output_video,
+    fps=tracking.fps,   # an dein Video anpassen
+)
 
     # Export analytics
     export_analytics(tracks, team_ball_control, settings)

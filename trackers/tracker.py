@@ -5,10 +5,16 @@ import cv2
 import numpy as np
 import pandas as pd
 import os
+import torch
 from utils import get_bbox_width, get_center_of_bbox
 
 class Tracker:
     def __init__(self, model_path):
+        # Using GPU
+        #device = torch.device("mps")
+        #self.model = YOLO(model_path).to(device) # load YOLO model from the given path
+
+        # Using CPU
         self.model = YOLO(model_path) # load YOLO model from the given path
         self.tracker = sv.ByteTrack() # initialize ByteTrack tracker from supervision
     
@@ -402,3 +408,177 @@ class Tracker:
                         new_tracks["goalkeepers"][frame_idx][tid] = track
 
         return new_tracks
+    
+    def get_object_tracks_from_video(self, video_path, read_from_stub=False, stub_path=None, batch_size=32):
+        """
+        Speicher-schonende Variante:
+        - liest das Video frame-weise mit cv2.VideoCapture
+        - verarbeitet Frames in Batches
+        - hält NIE das ganze Video im RAM
+        """
+
+        import os
+
+        # Falls Stub genutzt werden soll und existiert: direkt laden
+        if read_from_stub and stub_path is not None and os.path.exists(stub_path):
+            with open(stub_path, 'rb') as f:
+                tracks = pickle.load(f)
+            return tracks
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Could not open video: {video_path}")
+
+        tracks = {
+            "players": [],
+            "referees": [],
+            "goalkeepers": [],
+            "ball": [],
+        }
+
+        while True:
+            # 1) Batch von Frames einlesen
+            frames_batch = []
+            for _ in range(batch_size):
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frames_batch.append(frame)
+
+            if not frames_batch:
+                break  # Video zu Ende
+
+            # 2) YOLO+Tracking auf diesen Batch
+            detections = self.detect_frames(frames_batch)  # deine bestehende Funktion
+
+            # 3) Für jede Detection einen neuen Frame-Eintrag in tracks anlegen
+            for detection in detections:
+                frame_num = len(tracks["players"])
+
+                cls_names = detection.names
+                cls_names_inv = {v: k for k, v in cls_names.items()}
+
+                detection_supervision = sv.Detections.from_ultralytics(detection)
+
+                # Ball-Filtern wie in get_object_tracks
+                ball_class_id = cls_names_inv["ball"]
+                ball_conf_min = 0.30
+
+                mask_keep = []
+                for cls_id, conf in zip(detection_supervision.class_id,
+                                        detection_supervision.confidence):
+                    if cls_id == ball_class_id and conf < ball_conf_min:
+                        mask_keep.append(False)
+                    else:
+                        mask_keep.append(True)
+
+                detection_supervision = detection_supervision[mask_keep]
+
+                detection_with_tracks = self.tracker.update_with_detections(detection_supervision)
+
+                # Leere Dicts für diesen Frame
+                tracks["players"].append({})
+                tracks["referees"].append({})
+                tracks["goalkeepers"].append({})
+                tracks["ball"].append({})
+
+                # Spieler / Schiri / Goalie eintragen
+                for frame_detection in detection_with_tracks:
+                    bbox = frame_detection[0].tolist()
+                    cls_id = frame_detection[3]
+                    track_id = frame_detection[4]
+
+                    if cls_id == cls_names_inv['player']:
+                        tracks["players"][frame_num][track_id] = {"bbox": bbox}
+                    if cls_id == cls_names_inv['referee']:
+                        tracks["referees"][frame_num][track_id] = {"bbox": bbox}
+                    if cls_id == cls_names_inv['goalkeeper']:
+                        tracks["goalkeepers"][frame_num][track_id] = {"bbox": bbox}
+
+                # Ball (immer ID=1)
+                for frame_detection in detection_supervision:
+                    bbox = frame_detection[0]
+                    cls_id = frame_detection[3]
+                    if cls_id == ball_class_id:
+                        tracks["ball"][frame_num][1] = {"bbox": bbox}
+
+        cap.release()
+
+        # Rollen stabilisieren wie gehabt
+        tracks = self._stabilize_roles_per_track(tracks)
+
+        # Optional Stub speichern
+        if stub_path is not None:
+            with open(stub_path, 'wb') as f:
+                pickle.dump(tracks, f)
+
+        return tracks
+    
+    def draw_annotations_to_video(self, input_video_path, tracks, team_ball_control, output_path, fps=25):
+        """
+        Liest das Input-Video frame-weise,
+        zeichnet die Overlays und schreibt direkt in eine Ausgabedatei.
+        Kein Sammeln aller Frames im RAM.
+        """
+
+        cap = cv2.VideoCapture(input_video_path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Could not open video: {input_video_path}")
+
+        # Videogrösse ermitteln
+        width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+        frame_num = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame_copy = frame.copy()
+
+            player_dict = tracks["players"][frame_num] if frame_num < len(tracks["players"]) else {}
+            ball_dict = tracks["ball"][frame_num] if frame_num < len(tracks["ball"]) else {}
+            referee_dict = tracks["referees"][frame_num] if frame_num < len(tracks["referees"]) else {}
+            goalkeeper_dict = tracks["goalkeepers"][frame_num] if frame_num < len(tracks["goalkeepers"]) else {}
+
+            # ---- exakt deine bestehende Zeichenlogik wiederverwenden ----
+            # (kopiert aus draw_annotations, nur ohne output_video_frame)
+
+            # Draw Players
+            for track_id, player in player_dict.items():
+                raw = player.get("team_color")
+                color = (0,255,255) if raw is None else tuple(int(x) for x in np.asarray(raw).tolist())
+                frame_copy = self.draw_ellipse(frame_copy, player["bbox"], color, track_id)
+
+                if player.get('has_ball', False):
+                    frame_copy = self.draw_triangle(frame_copy, player['bbox'], (0,0,255))
+
+            # Draw Referees
+            for _, referee in referee_dict.items():
+                frame_copy = self.draw_ellipse(frame_copy, referee["bbox"], (0,255,255))
+
+            # Draw Goalkeepers
+            for track_id, goalkeeper in goalkeeper_dict.items():
+                frame_copy = self.draw_ellipse(frame_copy, goalkeeper["bbox"], (255,0,0), track_id)
+                if goalkeeper.get('has_ball', False):
+                    frame_copy = self.draw_triangle(frame_copy, goalkeeper['bbox'], (0,0,255))
+
+            # Draw Ball
+            for _, ball in ball_dict.items():
+                frame_copy = self.draw_triangle(frame_copy, ball["bbox"], (0,255,0))
+
+            # Draw Team Ball Control
+            frame_copy = self.draw_team_ball_control(frame_copy, frame_num, team_ball_control)
+
+            # Direkt ins Video schreiben
+            out.write(frame_copy)
+
+            frame_num += 1
+
+        cap.release()
+        out.release()
+        print(f"Saved annotated video to {output_path}")
