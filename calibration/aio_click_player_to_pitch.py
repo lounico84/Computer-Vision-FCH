@@ -1,11 +1,13 @@
 import cv2
 import numpy as np
+from config import Settings
+s = Settings()
 
 # ==== Pfade anpassen ====
-VIDEO_FILE   = "/Users/loubrauchli/Documents/Python_Projects/Project_Football_Analytics_FCHERRLIBERG/input_videos_match/Test/kuesnacht_test_clip2.MP4"
-MAP_IMG_FILE = "project/Computer-Vision-FCH/calibration/fch_fussballfeld.jpg"
-H_FILE       = "project/Computer-Vision-FCH/calibration/aio_homography_cam_to_map.npy"
-CALIB_FILE   = "project/Computer-Vision-FCH/calibration/aio_gopro_calib_approx.npz"  # dein approx-Kalib-File
+VIDEO_FILE   = str(s.paths.input_video)
+MAP_IMG_FILE = str(s.paths.pitch_image)
+H_FILE       = str(s.paths.homography_npy)
+CALIB_FILE   = str(s.paths.calib_file)
 
 # ==== 1. Daten laden ====
 # Homographie
