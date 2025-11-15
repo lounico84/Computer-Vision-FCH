@@ -3,6 +3,7 @@ import cv2
 import os
 from config import Settings
 s = Settings()
+analytics_cfg = s.analytics
 
 # Projekt-Root und Pfade
 H_NPY    = str(s.paths.homography_npy)
@@ -10,8 +11,8 @@ PITCH_IMG = str(s.paths.pitch_image)
 OUT_NPZ   = str(s.paths.homography_npz)
 
 # Echte Feldgröße in Metern
-FIELD_LENGTH_M = 100.0
-FIELD_WIDTH_M  = 60.0
+FIELD_LENGTH_M = analytics_cfg.pitch_length
+FIELD_WIDTH_M  = analytics_cfg.pitch_width
 
 # 1) H in Pitch-Pixel laden
 H_px = np.load(H_NPY)

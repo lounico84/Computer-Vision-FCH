@@ -3,13 +3,14 @@ import numpy as np
 import cv2
 from config import Settings
 s = Settings()
+analytics_cfg = s.analytics
 
 PITCH_IMG_FILE = str(s.paths.pitch_image)
 H_FILE         = str(s.paths.homography_npy)
 
 # echte Feldgröße in Metern
-FIELD_LENGTH_M = 100.0
-FIELD_WIDTH_M  = 60.0
+FIELD_LENGTH_M = analytics_cfg.pitch_length
+FIELD_WIDTH_M  = analytics_cfg.pitch_width
 
 class FieldMapper:
     def __init__(self):
@@ -28,7 +29,7 @@ class FieldMapper:
         return float(X), float(Y)
 
     def pitch_px_to_m(self, X, Y):
-        """Pitch-Pixel -> Meterkoordinaten (0..105m, 0..68m)."""
+        """Pitch-Pixel -> Meterkoordinaten (0..100m, 0..60m)."""
         mx = X / self.w * FIELD_LENGTH_M
         my = Y / self.h * FIELD_WIDTH_M
         return mx, my
