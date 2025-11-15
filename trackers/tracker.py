@@ -13,7 +13,7 @@ class Tracker:
         self.tracker = sv.ByteTrack() # initialize ByteTrack tracker from supervision
     
     # Interpolate missing ball positions over time
-    def interpolate_ball_positions(self, ball_positions, max_gap=20):
+    def interpolate_ball_positions(self, ball_positions, max_gap=20, max_jump_px=60):
         raw = []
         for x in ball_positions:
             if 1 in x:
@@ -22,6 +22,19 @@ class Tracker:
                 raw.append([np.nan, np.nan, np.nan, np.nan])
 
         df = pd.DataFrame(raw, columns=['x1','y1','x2','y2'])
+
+        # Calculate center
+        cx = (df["x1"] + df["x2"]) / 2.0
+        cy = (df["y1"] + df["y2"]) / 2.0
+
+        # Mark unplausabel jumps as NaN
+        prev_cx = cx.shift(1)
+        prev_cy = cy.shift(1)
+        dist = np.sqrt((cx - prev_cx) ** 2 + (cy - prev_cy) ** 2)
+
+        # If jump > max_jump_px, it dosen't count
+        mask_big_jump = dist > max_jump_px
+        df.loc[mask_big_jump, ["x1","y1","x2","y2"]] = np.nan
 
         # # Interpolate only gaps up to max_gap frames (for longer gaps keep NaN)
         df = df.interpolate(limit=max_gap, limit_direction="both")
