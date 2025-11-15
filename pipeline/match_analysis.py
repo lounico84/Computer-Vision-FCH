@@ -23,6 +23,6 @@ def run_match_analysis(settings: Settings | None = None):
 
     # Export analytics
     export_analytics(tracks, team_ball_control, settings)
-    
+    exit()
     # Draw annotations and save output video
     render_and_save_video(video_frames, tracks, team_ball_control, tracker, settings)

@@ -2,10 +2,14 @@ import os
 import numpy as np
 import cv2
 
+from config import Settings
+
+s = Settings()
+
 # Pfad relativ zum Projekt-Root ermitteln
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
-CALIBRATION_FILE = os.path.join(PROJECT_ROOT, "calibration", "homography.npz")
+CALIBRATION_FILE = os.path.join(s.paths.homography_npz)
 
 _H = None
 _H_inv = None
