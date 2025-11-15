@@ -3,6 +3,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import cv2
 
+from config import Settings
+s = Settings()
+analytics_cfg = s.analytics
+
 
 def detect_passes(
     df,
@@ -226,6 +230,7 @@ def create_pass_maps_from_csv(
         fps=fps,
         speed_threshold=speed_threshold,
         min_distance=min_distance,
+        min_flight_frames=analytics_cfg.pass_min_frames
     )
 
     _plot_pass_map(

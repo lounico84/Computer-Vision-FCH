@@ -13,11 +13,11 @@ class PathConfig:
     input_video: Path = "input_videos_match/Test/kuesnacht_test_clip2.MP4"
 
     # Output
-    output_video: Path = "output_video_match/output_video_k.avi"
+    output_video: Path = "output_video_match/output_video_k_new.avi"
     color_debug_image: Path = "output_video_match/color_debug.png"
 
     # Stubs
-    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k.pkl"
+    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_new.pkl"
 
     # Analytics
     frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events.csv"
@@ -59,6 +59,7 @@ class AnalyticsConfig:
     pass_min_distance: float = 1.0
     max_ball_speed: float = 40.0      # 144 km/h
     pitch_margin: float = 3.0
+    pass_min_frames: int = 3
 
 # Global application settings
 @dataclass

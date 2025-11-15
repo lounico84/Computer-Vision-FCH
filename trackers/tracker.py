@@ -13,7 +13,7 @@ class Tracker:
         self.tracker = sv.ByteTrack() # initialize ByteTrack tracker from supervision
     
     # Interpolate missing ball positions over time
-    def interpolate_ball_positions(self, ball_positions, max_gap=20, max_jump_px=60):
+    def interpolate_ball_positions(self, ball_positions, max_gap=20, max_jump_px=80):
         raw = []
         for x in ball_positions:
             if 1 in x:
@@ -92,6 +92,23 @@ class Tracker:
 
             # Convert to Supervision detection format
             detection_supervision = sv.Detections.from_ultralytics(detection)
+
+            # Detect balls with higher confidence
+            cls_names = detection.names
+            cls_names_inv = {v: k for k, v in cls_names.items()}
+            ball_class_id = cls_names_inv["ball"]
+
+            ball_conf_min = 0.30
+
+            mask_keep = []
+            for cls_id, conf in zip(detection_supervision.class_id,
+                                    detection_supervision.confidence):
+                if cls_id == ball_class_id and conf < ball_conf_min:
+                    mask_keep.append(False)
+                else:
+                    mask_keep.append(True)
+
+            detection_supervision = detection_supervision[mask_keep]
 
             # Convert Goalkeeper to Player object
             '''
