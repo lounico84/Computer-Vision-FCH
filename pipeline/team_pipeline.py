@@ -1,34 +1,103 @@
 import numpy as np
+import cv2
 
 from config import Settings
 from utils import get_center_of_bbox
 from team_assigner import TeamAssigner
 
 # Assign players and referees to teams based on color information and votes
-def assign_teams(video_frames, tracks, settings: Settings):
+def assign_teams(tracks, settings: Settings):
     team_assigner = TeamAssigner()
 
-    # Estimate main team colors and referee color from the video
-    team_assigner.assign_team_color(video_frames, tracks)
-    team_assigner.assign_referee_color(video_frames, tracks)
-    # Save a debug image that shows the color regions used for classification
+    video_path = str(settings.paths.input_video)
+    num_frames = len(tracks["players"])
+
+    # 1) Wenige Frames für Farb-Schätzung laden
+    #    (gleichmäßig über das Video verteilt)
+    # Wie viele Frames maximal für K-Means genutzt werden sollen
+    sample_frames_team = 500
+    sample_frames_ref  = 500
+
+    num_samples = min(num_frames, max(sample_frames_team, sample_frames_ref))
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open video: {video_path}")
+
+    # Gleichmäßig verteilte Frame-Indizes bestimmen
+    sample_indices = np.linspace(0, num_frames - 1, num_samples, dtype=int)
+    sample_index_set = set(sample_indices.tolist())
+
+    sample_frames = []
+    frame_idx = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if frame_idx in sample_index_set:
+            sample_frames.append(frame)
+
+        frame_idx += 1
+        if len(sample_frames) >= num_samples:
+            break
+
+    # Build a matching tracks subset so that indices of frames and tracks align
+    sample_tracks = {
+        "players": [],
+        "referees": [],
+        "goalkeepers": [],
+        "ball": [],
+    }
+    for idx in sample_indices:
+        sample_tracks["players"].append(tracks["players"][idx])
+        sample_tracks["referees"].append(tracks["referees"][idx])
+        sample_tracks["goalkeepers"].append(tracks["goalkeepers"][idx])
+        sample_tracks["ball"].append(tracks["ball"][idx])
+
+
+    cap.release()
+
+    # Team- und Schiri-Farben aus wenigen Frames schätzen
+    team_assigner.assign_team_color(sample_frames, sample_tracks, sample_frames=sample_frames_team)
+    team_assigner.assign_referee_color(sample_frames, sample_tracks, sample_frames=sample_frames_ref)
     team_assigner.save_color_debug(str(settings.paths.color_debug_image))
 
-    # Collect team votes per player across all frames
-    for frame_idx, player_track in enumerate(tracks["players"]):
-        frame = video_frames[frame_idx]
+    # -----------------------------
+    # 2) Zweiter Durchlauf: alle Frames streamen,
+    #    um Team-Votes pro Spieler zu sammeln
+    # -----------------------------
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open video: {video_path}")
+
+    frame_idx = 0
+    while frame_idx < num_frames:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        player_track = tracks["players"][frame_idx]
         for player_id, track in player_track.items():
-            # Each call contributes one vote for team 1 or team 2 for this player
             team_assigner.get_player_team(frame, track["bbox"], player_id)
 
-    # Assign each player to the team with the most votes
+        frame_idx += 1
+
+    cap.release()
+
+        # -----------------------------
+    # 3) Mehrheitsteam pro Spieler bestimmen (wie früher)
+    # -----------------------------
     for player_id, votes_dict in team_assigner.team_vote_counts.items():
         votes_team1 = votes_dict.get(1, 0)
         votes_team2 = votes_dict.get(2, 0)
+        # Mehrheits-Team (bei Gleichstand Team 1)
         majority_team = 1 if votes_team1 >= votes_team2 else 2
         team_assigner.player_team_dict[player_id] = majority_team
 
-    # Decide if a player is actually a referee instead of a team player
+    # -----------------------------
+    # 3) Finale Labels berechnen (wie vorher)
+    # -----------------------------
     cfg = settings.referee
     final_labels = {}  # mapping player_id: 0 (referee), 1 (team 1), 2 (team 2)
 
@@ -36,31 +105,29 @@ def assign_teams(video_frames, tracks, settings: Settings):
         ref_votes = team_assigner.ref_vote_counts.get(player_id, 0)
         default_team = team_assigner.player_team_dict.get(player_id, 1)
 
-        # A player is classified as referee if:
         if (
-            team_assigner.referee_color is not None # a referee color exists
-            and obs_count >= cfg.min_observations # enough frames were observed
-            and ref_votes >= cfg.min_votes # enough referee votes were collected
-            and ref_votes >= cfg.min_ratio * obs_count # referee votes are a strong majority
+            team_assigner.referee_color is not None
+            and obs_count >= cfg.min_observations
+            and ref_votes >= cfg.min_votes
+            and ref_votes >= cfg.min_ratio * obs_count
         ):
             final_labels[player_id] = 0
         else:
             final_labels[player_id] = default_team
 
-    # Rewrite the tracks based on the final labels
+    # Tracks umschreiben (wie vorher)
     for frame_idx, player_track in enumerate(tracks["players"]):
-        # Use list to avoid modifying the dict while iterating
         for player_id, track in list(player_track.items()):
             team = final_labels.get(player_id, 1)
 
             if team == 0:
-                # If entire track is considered a referee, move from players to referees
                 tracks["referees"][frame_idx][player_id] = track
                 del tracks["players"][frame_idx][player_id]
             else:
-                # If regular team player, store team and team color
                 tracks["players"][frame_idx][player_id]["team"] = team
-                tracks["players"][frame_idx][player_id]["team_color"] = (team_assigner.team_colors[team])
+                tracks["players"][frame_idx][player_id]["team_color"] = (
+                    team_assigner.team_colors[team]
+                )
 
     return tracks, team_assigner
 
