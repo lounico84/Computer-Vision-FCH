@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+from tqdm import tqdm
 
 from config import Settings
 from utils import get_center_of_bbox
@@ -72,10 +73,8 @@ def assign_teams(tracks, settings: Settings):
     # Einfacher "sticky" Filter: bei unsicheren Frames altes Team behalten
     last_team: dict[int, int] = {}  # track_id -> zuletzt verwendetes Team
 
-    for f_idx in range(num_frames):
+    for f_idx in tqdm(range(num_frames), total=num_frames, desc="Progress"):
         ret, frame = cap.read()
-        percent = (f_idx + 1) / num_frames * 100
-        print(f"\rFrame {f_idx+1}/{num_frames} ({percent:6.2f} % )", end="", flush=True)
         if not ret:
             break
 

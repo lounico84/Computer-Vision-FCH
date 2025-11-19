@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import os
 import torch
+from tqdm import tqdm
 from utils import get_bbox_width, get_center_of_bbox
 
 class Tracker:
@@ -532,9 +533,11 @@ class Tracker:
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         frame_num = 0
-        while True:
+
+        for _ in tqdm(range(total_frames), desc="Progress"):
             ret, frame = cap.read()
             if not ret:
                 break
@@ -548,9 +551,6 @@ class Tracker:
 
             # ---- exakt deine bestehende Zeichenlogik wiederverwenden ----
             # (kopiert aus draw_annotations, nur ohne output_video_frame)
-
-            percent = (frame_num) / total_frames * 100
-            print(f"\rFrame {frame_num}/{total_frames} ({percent:6.2f} % )", end="", flush=True)
 
             # Draw Players
             for track_id, player in player_dict.items():
