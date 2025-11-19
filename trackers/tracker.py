@@ -64,9 +64,9 @@ class Tracker:
             detections_batch = self.model.predict(
                 frames[i:i+batch_size],
                 conf=0.1,
+                verbose=False,
                 )
             detections += detections_batch
-            print(f"\rFrame {i+batch_size}/{frames}", end="", flush=True)
         
         # Returns a list of detection/tracking results, one per frame
         return detections
@@ -411,7 +411,7 @@ class Tracker:
 
         return new_tracks
     
-    def get_object_tracks_from_video(self, video_path, read_from_stub=False, stub_path=None, batch_size=32):
+    def get_object_tracks_from_video(self, video_path, read_from_stub=False, stub_path=None, batch_size=32, resume_from_stub=False):
         """
         Speicher-schonende Variante:
         - liest das Video frame-weise mit cv2.VideoCapture
@@ -419,10 +419,8 @@ class Tracker:
         - hält NIE das ganze Video im RAM
         """
 
-        import os
-
         # Falls Stub genutzt werden soll und existiert: direkt laden
-        if read_from_stub and stub_path is not None and os.path.exists(stub_path):
+        if read_from_stub and not resume_from_stub and stub_path is not None and os.path.exists(stub_path):
             with open(stub_path, 'rb') as f:
                 tracks = pickle.load(f)
             return tracks
@@ -430,13 +428,28 @@ class Tracker:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise RuntimeError(f"Could not open video: {video_path}")
+        
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        tracks = {
-            "players": [],
-            "referees": [],
-            "goalkeepers": [],
-            "ball": [],
-        }
+        # Resume from pkl file
+        if resume_from_stub and stub_path is not None and os.path.exists(stub_path):
+            with open(stub_path, 'rb') as f:
+                tracks = pickle.load(f)
+            # Anzahl bereits bearbeiteter Frames bestimmen
+            already_processed_frames = len(tracks.get("players", []))
+            # Video an diese Stelle springen
+            cap.set(cv2.CAP_PROP_POS_FRAMES, already_processed_frames)
+        else:
+            # Neu von vorne starten
+            tracks = {
+                "players": [],
+                "referees": [],
+                "goalkeepers": [],
+                "ball": [],
+            }
+            already_processed_frames = 0
+
+        pbar = tqdm(total=total_frames, desc="YOLO tracking", initial=already_processed_frames)
 
         while True:
             # 1) Batch von Frames einlesen
@@ -452,6 +465,8 @@ class Tracker:
 
             # 2) YOLO+Tracking auf diesen Batch
             detections = self.detect_frames(frames_batch)  # deine bestehende Funktion
+
+            pbar.update(len(detections))
 
             # 3) Für jede Detection einen neuen Frame-Eintrag in tracks anlegen
             for detection in detections:
@@ -504,6 +519,7 @@ class Tracker:
                     if cls_id == ball_class_id:
                         tracks["ball"][frame_num][1] = {"bbox": bbox}
 
+        pbar.close()
         cap.release()
 
         # Rollen stabilisieren wie gehabt

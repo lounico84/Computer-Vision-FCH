@@ -16,6 +16,7 @@ def load_video_and_tracks(settings: Settings):
         str(paths.input_video),
         read_from_stub=tracking_cfg.read_tracks_from_stub,
         stub_path=str(paths.tracks_stub),
+        resume_from_stub=str(paths.tracks_stub)
     )
 
     # Ball-Trajektorien glätten / Lücken interpolieren

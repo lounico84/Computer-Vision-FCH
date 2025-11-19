@@ -13,16 +13,16 @@ class PathConfig:
     input_video: Path = "input_videos_match/Test/kuesnacht_test_clip3.MP4"
 
     # Output
-    output_video: Path = "output_video_match/output_video_k_3_2.avi"
-    color_debug_image: Path = "output_video_match/color_debug_3_2.png"
+    output_video: Path = "output_video_match/output_video_k_3_5.avi"
+    color_debug_image: Path = "output_video_match/color_debug_3_5.png"
 
     # Stubs
-    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_3_2.pkl"
+    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_3_5.pkl"
 
     # Analytics
-    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events_3_2.csv"
-    pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1_3_2.png"
-    pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2_3_2.png"
+    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events_3_5.csv"
+    pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1_3_5.png"
+    pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2_3_5.png"
 
     # Calibration
     pitch_image: Path = PROJECT_ROOT / "calibration/pictures/fch_fussballfeld.jpg"
