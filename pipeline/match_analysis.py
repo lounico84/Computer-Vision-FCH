@@ -23,7 +23,7 @@ def run_match_analysis(settings: Settings | None = None):
     tracks, team_assigner = assign_teams(tracks, settings)
     tracks = assign_goalkeepers_to_teams(tracks, team_assigner)
 
-    print("[STEP 3] - computing team ball controll over all frames...")
+    print("\n[STEP 3] - computing team ball controll over all frames...")
     # Compute team ball control over all frames
     team_ball_control = compute_team_ball_control(tracks, settings)
 
@@ -37,7 +37,7 @@ def run_match_analysis(settings: Settings | None = None):
         fps=tracking.fps,
     )
 
-    print("[STEP 5] - exporting analytics...")
+    print("\n[STEP 5] - exporting analytics...")
     # Export analytics
     export_analytics(tracks, team_ball_control, settings)
 

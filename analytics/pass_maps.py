@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import cv2
+import math
 
 from config import Settings
 s = Settings()
@@ -11,111 +12,167 @@ analytics_cfg = s.analytics
 def detect_passes(
     df,
     fps,
-    speed_threshold=5.0,
-    min_distance=1.0,
-    min_flight_frames=3,
-    landing_window_frames=10,
+    speed_threshold=5.0,      # minimale Ballgeschwindigkeit, um als "Pass" zu zählen
+    min_distance=7.0,         # minimale Passdistanz in Metern
+    min_flight_frames=3,      # (ungenutzt, nur für Kompatibilität)
+    landing_window_frames=10, # (ungenutzt)
+    min_possession_frames=3,  # Spieler muss mind. so viele Frames Ballkontrolle haben
+    max_gap_seconds=6.0,      # max. Zeit zwischen Abspiel und neuer Kontrolle
 ):
     """
-    Erkenne Pässe basierend auf:
-      - ball_x_m, ball_y_m
-      - ball_speed_m_s
-      - team_ball_control
+    Konservative Pass-Erkennung basierend auf stabilen Ballbesitz-Segmenten.
 
-    Logik:
-      - Start eines Passes:
-          * team_ball_control in {1,2}
-          * ball_speed steigt von < threshold auf >= threshold
-      - Flugphase:
-          * Ball sichtbar, Speed weiterhin hoch
-      - Ende:
-          * Speed < threshold oder Ball nicht sichtbar
-      - Klassifikation:
-          * Schaue landing_window_frames Frames nach "Landung"
-          * dom. team_ball_control == flight_team -> angekommen
-          * dom. anderes Team / kein Team -> Fehlpass
+    Vorgehen:
+      - Baue Segmente (owner_id, team, start_idx, end_idx) mit konstantem ball_owner_id.
+      - Ein Pass ist ein Übergang von Segment A -> Segment B, wenn:
+          * A: echter Spieler (owner != -1, team in {1,2})
+          * Länge(A) >= min_possession_frames
+          * B: echter Spieler, owner_B != owner_A, team_B in {1,2}
+          * Zeitabstand <= max_gap_seconds
+          * Zwischen A-Ende und B-Start existiert mind. ein Frame mit
+            ball_speed_m_s >= speed_threshold
+          * Distanz(Ballposition Abspiel -> Ballposition Annahme) >= min_distance
+      - completed = True, wenn Team(A) == Team(B), sonst Fehlpass/Interception.
+
+    Rückgabe: Liste von dicts mit
+      {
+        "team": Team des Passgebers (1 oder 2),
+        "start_x": x in m (Ballposition beim Abspiel),
+        "start_y": y in m,
+        "end_x": x in m (Ballposition beim ersten Kontakt des Empfängers),
+        "end_y": y in m,
+        "completed": True/False
+      }
     """
 
-    passes = []
-
-    in_flight = False
-    flight_team = None
-    start_x = start_y = None
-    start_idx = None
-
-    last_speed = np.nan
-    last_team_control = 0
+    owners = df["ball_owner_id"].to_numpy()
+    teams = df["ball_owner_team"].to_numpy()
+    ball_x = df["ball_x_m"].to_numpy()
+    ball_y = df["ball_y_m"].to_numpy()
+    speed = df["ball_speed_m_s"].to_numpy()
 
     n = len(df)
+    passes = []
 
-    for idx, row in df.iterrows():
-        visible = row.get("ball_visible", 0)
-        x = row.get("ball_x_m", np.nan)
-        y = row.get("ball_y_m", np.nan)
-        speed = row.get("ball_speed_m_s", np.nan)
-        team_ctrl = int(row.get("team_ball_control", 0))
+    if n == 0:
+        print("[pass_maps] detect_passes: 0 Pässe erkannt (leerer DF).")
+        return passes
 
-        if not visible or not np.isfinite(x) or not np.isfinite(y) or not np.isfinite(speed):
-            last_speed = speed
-            last_team_control = team_ctrl
+    # --- 1) Segmente von konstantem Besitzer bauen ---
+    segments = []
+    cur_owner = owners[0]
+    cur_team = teams[0]
+    start = 0
+    for i in range(1, n):
+        if owners[i] != cur_owner:
+            segments.append((cur_owner, cur_team, start, i - 1))
+            cur_owner = owners[i]
+            cur_team = teams[i]
+            start = i
+    segments.append((cur_owner, cur_team, start, n - 1))
+
+    max_gap_frames = int(max_gap_seconds * fps)
+
+    def valid_before(idx):
+        """Letzter Frame <= idx mit gültiger Ballposition."""
+        for i in range(idx, -1, -1):
+            if math.isfinite(ball_x[i]) and math.isfinite(ball_y[i]):
+                return i
+        return None
+
+    def valid_after(idx):
+        """Erster Frame >= idx mit gültiger Ballposition."""
+        for i in range(idx, n):
+            if math.isfinite(ball_x[i]) and math.isfinite(ball_y[i]):
+                return i
+        return None
+
+    # --- 2) Von jedem Ballbesitz-Segment A zum nächsten sinnvollen Segment B ---
+    for si, (own, team, start_i, end_i) in enumerate(segments):
+        # Nur echte Spielerbesitze berücksichtigen
+        if own == -1 or team not in (1, 2):
             continue
 
-        # -------- Pass-Start?
-        if not in_flight:
-            if (
-                team_ctrl in (1, 2)
-                and (not np.isfinite(last_speed) or last_speed < speed_threshold)
-                and speed >= speed_threshold
-            ):
-                in_flight = True
-                flight_team = team_ctrl
-                start_x, start_y = x, y
-                start_idx = idx
+        seg_len = end_i - start_i + 1
+        if seg_len < min_possession_frames:
+            # zu kurze Ballkontrolle -> z.B. Zweikampf-Pingpong
+            continue
 
-        else:
-            # -------- Pass-Flug läuft
-            # Ende, wenn Geschwindigkeit wieder klein wird
-            if speed < speed_threshold:
-                end_x, end_y = x, y
-                end_idx = idx
-                flight_frames = end_idx - start_idx + 1
-                dist = float(np.hypot(end_x - start_x, end_y - start_y))
+        # Nächstes Segment B suchen
+        candidate_j = None
+        for sj in range(si + 1, len(segments)):
+            own2, team2, start_j, end_j = segments[sj]
 
-                if flight_frames >= min_flight_frames and dist >= min_distance:
-                    # Landing-Fenster zur Klassifikation
-                    look_end = min(end_idx + landing_window_frames, n - 1)
-                    post = df.iloc[end_idx:look_end + 1]
-                    teams = post["team_ball_control"].to_numpy()
+            # zeitliche Lücke zu groß -> keine Verbindung mehr
+            if start_j - end_i > max_gap_frames:
+                break
 
-                    # häufigstes Team (ohne 0)
-                    valid = teams[(teams == 1) | (teams == 2)]
-                    if valid.size > 0:
-                        values, counts = np.unique(valid, return_counts=True)
-                        new_team = int(values[np.argmax(counts)])
-                    else:
-                        new_team = 0
+            # Segmente ohne Besitzer oder ohne Team ignorieren
+            if own2 == -1 or team2 not in (1, 2):
+                continue
 
-                    completed = (new_team == flight_team)
+            # Self-Pass (A -> A) ignorieren
+            if own2 == own:
+                continue
 
-                    passes.append(
-                        {
-                            "team": flight_team,
-                            "start_x": start_x,
-                            "start_y": start_y,
-                            "end_x": end_x,
-                            "end_y": end_y,
-                            "completed": completed,
-                        }
-                    )
+            candidate_j = sj
+            break
 
-                # Reset Flug
-                in_flight = False
-                flight_team = None
-                start_x = start_y = None
-                start_idx = None
+        if candidate_j is None:
+            continue
 
-        last_speed = speed
-        last_team_control = team_ctrl
+        own2, team2, start_j, end_j = segments[candidate_j]
+
+        # --- Geschwindigkeitskriterium: es muss einen "Kick" dazwischen geben ---
+        t0, t1 = end_i, start_j
+        if t1 <= t0:
+            continue
+
+        window_speeds = speed[t0 : t1 + 1]
+        finite_mask = np.isfinite(window_speeds)
+        if not finite_mask.any():
+            continue
+
+        if not (window_speeds[finite_mask] >= speed_threshold).any():
+            # kein Frame mit ausreichender Ballgeschwindigkeit -> eher kein Pass
+            continue
+
+        # --- Start-/Endposition anhand der Ballposition bestimmen ---
+        start_idx = valid_before(end_i)
+        end_idx = valid_after(start_j)
+
+        if start_idx is None or end_idx is None:
+            continue
+
+        sx, sy = ball_x[start_idx], ball_y[start_idx]
+        ex, ey = ball_x[end_idx], ball_y[end_idx]
+
+        if not (
+            math.isfinite(sx)
+            and math.isfinite(sy)
+            and math.isfinite(ex)
+            and math.isfinite(ey)
+        ):
+            continue
+
+        dist = math.hypot(ex - sx, ey - sy)
+        if dist < min_distance:
+            # zu kurzer Weg -> eher kurzer Kontakt/Dribbling
+            continue
+
+        completed = (team2 == team)
+
+        passes.append(
+            {
+                "team": int(team),   # Team des Passgebers
+                "start_x": float(sx),
+                "start_y": float(sy),
+                "end_x": float(ex),
+                "end_y": float(ey),
+                "completed": bool(completed),
+            }
+        )
+
     print(f"[pass_maps] detect_passes: {len(passes)} Pässe erkannt.")
     return passes
 

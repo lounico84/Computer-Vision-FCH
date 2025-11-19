@@ -18,11 +18,14 @@ def load_video_and_tracks(settings: Settings):
         stub_path=str(paths.tracks_stub),
     )
 
-    # Fill in missing ball positions across frames
-    tracks["ball"] = tracker.interpolate_ball_positions(
-        tracks["ball"],
-        max_gap=tracking_cfg.max_ball_interpolation_gap,
-    )
+    # Ball-Trajektorien glätten / Lücken interpolieren
+    # nutzt dein bestehendes interpolate_ball_positions
+    if tracking_cfg.max_ball_interpolation_gap > 0:
+        tracks["ball"] = tracker.interpolate_ball_positions(
+            tracks["ball"],
+            max_gap=tracking_cfg.max_ball_interpolation_gap,
+            max_jump_px=80,  # kannst du tunen
+        )
 
     # KEINE video_frames mehr zurückgeben
     return tracker, tracks

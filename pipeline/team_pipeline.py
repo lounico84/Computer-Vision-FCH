@@ -74,6 +74,8 @@ def assign_teams(tracks, settings: Settings):
 
     for f_idx in range(num_frames):
         ret, frame = cap.read()
+        percent = (f_idx + 1) / num_frames * 100
+        print(f"\rFrame {f_idx+1}/{num_frames} ({percent:6.2f} % )", end="", flush=True)
         if not ret:
             break
 

@@ -65,6 +65,7 @@ class Tracker:
                 conf=0.1,
                 )
             detections += detections_batch
+            print(f"\rFrame {i+batch_size}/{frames}", end="", flush=True)
         
         # Returns a list of detection/tracking results, one per frame
         return detections
@@ -531,7 +532,7 @@ class Tracker:
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         frame_num = 0
         while True:
             ret, frame = cap.read()
@@ -547,6 +548,9 @@ class Tracker:
 
             # ---- exakt deine bestehende Zeichenlogik wiederverwenden ----
             # (kopiert aus draw_annotations, nur ohne output_video_frame)
+
+            percent = (frame_num) / total_frames * 100
+            print(f"\rFrame {frame_num}/{total_frames} ({percent:6.2f} % )", end="", flush=True)
 
             # Draw Players
             for track_id, player in player_dict.items():
