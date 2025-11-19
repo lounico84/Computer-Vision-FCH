@@ -1,15 +1,12 @@
 import numpy as np
 from sklearn.cluster import KMeans
 import cv2
+from collections import defaultdict
 
 class TeamAssigner:
     def __init__(self):
         self.team_colors = {}       # mean jersey colors for each team: {1: (B,G,R), 2: (B,G,R)}
-        self.player_team_dict = {}  # final mapping: player_id to team_id 1 or 2
         self.referee_color = None   # estimated average referee color in BGR
-        self.ref_vote_counts = {}   # how many times each plaxer was classified as "referee-like"
-        self.player_obs_counts = {} # how many times a player was seen
-        self.team_vote_counts = {}  # how many votes for team 1 and team 2 {player_id: {1: count_team1, 2: count_team2}}
 
     # Run k-means clustering on the image pixels to find 2 dominat color clusters
     def get_clustering_model(self, image):
@@ -23,7 +20,7 @@ class TeamAssigner:
         x1, y1, x2, y2 = map(int, bbox)
         h_frame, w_frame = frame.shape[:2]
 
-        # Clamp bbox coordinates to valid image range
+        # BBox clampen
         x1 = max(0, min(w_frame - 1, x1))
         x2 = max(0, min(w_frame,     x2))
         y1 = max(0, min(h_frame - 1, y1))
@@ -31,9 +28,9 @@ class TeamAssigner:
 
         crop = frame[y1:y2, x1:x2]
         if crop.size == 0:
-            return np.array([170, 170, 170], dtype=np.float32)  # fallback neutral gray if crop is invalid
+            return np.array([170, 170, 170], dtype=np.float32)
 
-        # Define torso region as a central band within the bbox
+        # Torso wie bisher
         h, w = crop.shape[:2]
         y_top    = int(h * 0.25)
         y_bottom = int(h * 0.75)
@@ -41,33 +38,54 @@ class TeamAssigner:
         x_right  = int(w * 0.80)
         torso = crop[y_top:y_bottom, x_left:x_right]
 
-        # If torso region is empty, fallback to full crop
         if torso.size == 0:
             torso = crop
             h, w = torso.shape[:2]
         else:
             h, w = torso.shape[:2]
 
-        # Prepare data for k-means (flatten to 2D: pixels x 3 channels)
-        pixels = torso.reshape(-1, 3)  # BGR
+        # --- NEU: Rasen herausfiltern über HSV ---
+        torso_hsv = cv2.cvtColor(torso, cv2.COLOR_BGR2HSV)
+
+        # Typischer Grünbereich: H ~ [30, 90], ausreichend S/V
+        H = torso_hsv[:, :, 0]
+        S = torso_hsv[:, :, 1]
+        V = torso_hsv[:, :, 2]
+
+        grass_mask = (
+            (H >= 30) & (H <= 90) &
+            (S >= 40) & (V >= 40)
+        )
+
+        # Spieler-Pixel = alles, was nicht offensichtlich Rasen ist
+        player_mask = ~grass_mask
+
+        # Falls nach Filter zu wenig Pixel -> fallback auf ursprüngliche Logik
+        player_pixels = torso[player_mask]
+        if player_pixels.shape[0] < 10:
+            pixels = torso.reshape(-1, 3)
+        else:
+            pixels = player_pixels.reshape(-1, 3)
+
         if len(pixels) < 10:
-            # Not enough pixels to cluster, return neutral color
             return np.array([170, 170, 170], dtype=np.float32)
 
         k = 3
         km = KMeans(n_clusters=k, init="k-means++", n_init=5, random_state=0)
         km.fit(pixels)
-        labels = km.labels_.reshape(h, w)          # cluster label per pixel
-        centers = km.cluster_centers_.astype(np.float32)  # (3,3) BGR
 
-        # Coordinate grid for centrality calculation
+        # Wir brauchen Labels in Bildform nur, wenn wir zentrale Cluster berechnen.
+        # Hier einfacher: cluster-Centroid nehmen, der am nächsten zur Bildmitte liegt.
+        # Also gleichen Ansatz wie vorher, dafür benötigen wir labels.
+        labels_full = km.predict(torso.reshape(-1, 3)).reshape(h, w)
+        centers = km.cluster_centers_.astype(np.float32)
+
         ys, xs = np.indices((h, w))
         cx, cy = w / 2.0, h / 2.0
 
-        # For each cluster: average squared distance of its pixels to the image center
         centrality = []
         for c in range(k):
-            mask = (labels == c)
+            mask = (labels_full == c)
             if not np.any(mask):
                 centrality.append(np.inf)
                 continue
@@ -76,7 +94,6 @@ class TeamAssigner:
             dist2 = (xs_c - cx) ** 2 + (ys_c - cy) ** 2
             centrality.append(np.mean(dist2))
 
-        # Choose the cluster whose pixels are most centered (smallest mean distance)
         best_cluster = int(np.argmin(centrality))
         player_color = centers[best_cluster]
 
@@ -101,16 +118,107 @@ class TeamAssigner:
         self.referee_color = median_color.astype(np.float32)
 
     # Estimate the main jersey colors for team 1 and 2
+    # Estimate the main jersey colors for team 1 and 2
     def assign_team_color(self, frames, tracks, sample_frames=10):
-        # Collect colors from players across several frames
+        """
+        Verbesserte Version:
+        1) Nutzt in den ersten Frames die X-Positionen der Spieler, um eine sinnvolle
+           Trennlinie zwischen zwei Gruppen (linkes vs. rechtes Team) zu finden.
+           -> Linke Gruppe  = Team 2
+           -> Rechte Gruppe = Team 1
+        2) Wenn das nicht klappt (zu wenig Samples), Fallback auf das alte K-Means-Verfahren.
+        """
+        num_frames = len(frames)
+        F = min(sample_frames, num_frames)
+
+        # Erstmal nur alle Spieler-X-Mitten sammeln, um die Trennlinie zu bestimmen
+        cx_samples = []
+
+        for f in range(F):
+            frame = frames[f]
+            h, w = frame.shape[:2]
+
+            for _, p in tracks["players"][f].items():
+                x1, y1, x2, y2 = map(int, p["bbox"])
+                cx = 0.5 * (x1 + x2)
+                # Nur BBoxen im Bildbereich
+                if 0 <= cx < w:
+                    cx_samples.append(cx)
+
+        # Wenn wir nicht genug Samples haben -> direkt Fallback
+        MIN_CX_SAMPLES = 20
+        if len(cx_samples) >= MIN_CX_SAMPLES:
+            X_cx = np.asarray(cx_samples, dtype=np.float32).reshape(-1, 1)
+
+            # 1D-K-Means über die X-Koordinaten der Spieler
+            km_split = KMeans(n_clusters=2, n_init=10, random_state=0).fit(X_cx)
+            centers = np.sort(km_split.cluster_centers_.flatten())
+
+            # linkes und rechtes Clusterzentrum
+            x_left_center, x_right_center = centers[0], centers[1]
+            # Trennlinie zwischen den beiden Gruppen
+            split_x = 0.5 * (x_left_center + x_right_center)
+        else:
+            # zu wenig Daten für sinnvolle Trennlinie -> Fallback auf Bildmitte
+            # (kommt selten vor, z.B. wenn Tracking im ersten Frame noch leer ist)
+            # Hinweis: das ist nur ein Notbehelf, Hauptfall ist der km_split oben.
+            if len(frames) == 0:
+                self.team_colors = {1: (0, 255, 255), 2: (255, 0, 0)}
+                return
+            h, w = frames[0].shape[:2]
+            split_x = w * 0.5
+
+        # Jetzt aus den ersten Frames pro Seite die Trikotfarben sammeln
+        colors_left = []   # linke Gruppe  -> Team 2
+        colors_right = []  # rechte Gruppe -> Team 1
+
+        for f in range(F):
+            frame = frames[f]
+            for _, p in tracks["players"][f].items():
+                bbox = p["bbox"]
+                x1, y1, x2, y2 = map(int, bbox)
+                cx = 0.5 * (x1 + x2)
+
+                color = self.get_player_color(frame, bbox)
+
+                # Strikte Zuordnung:
+                # alles links/auf der Trennlinie -> Team 2 (left),
+                # alles rechts davon           -> Team 1 (right)
+                if cx <= split_x:
+                    colors_left.append(color)
+                else:
+                    colors_right.append(color)
+
+        # Wenn wir genug Samples pro Seite haben, nutzen wir sie direkt
+        MIN_COLORS_PER_SIDE = 10
+        if len(colors_left) >= MIN_COLORS_PER_SIDE and len(colors_right) >= MIN_COLORS_PER_SIDE:
+            X_left = np.asarray(colors_left, dtype=np.float32)
+            X_right = np.asarray(colors_right, dtype=np.float32)
+
+            # Median je Seite: robust gegenüber Ausreißern
+            c_left = np.median(X_left, axis=0)
+            c_right = np.median(X_right, axis=0)
+
+            # WICHTIG:
+            # Team 1 = rechte Gruppe
+            # Team 2 = linke Gruppe
+            self.team_colors[1] = tuple(map(int, c_right))  # rechts
+            self.team_colors[2] = tuple(map(int, c_left))   # links
+            return
+
+        # -----------------------------------------
+        # Fallback: altes K-Means-Verfahren (wie bisher)
+        # -----------------------------------------
         colors = []
         F = min(sample_frames, len(frames))
         for f in range(F):
+            frame = frames[f]
             for _, p in tracks["players"][f].items():
-                colors.append(self.get_player_color(frames[f], p["bbox"]))
+                colors.append(self.get_player_color(frame, p["bbox"]))
+
         if len(colors) < 3:
             # Fallback, simple default colors if not enough samples
-            self.team_colors = {1:(0,255,255), 2:(255,0,0)}
+            self.team_colors = {1: (0, 255, 255), 2: (255, 0, 0)}
             return
 
         X = np.asarray(colors, dtype=np.float32)
@@ -124,7 +232,7 @@ class TeamAssigner:
         cands = k3.cluster_centers_[top2]
 
         # Check if the clusters are sufficiently different
-        if np.linalg.norm(cands[0]-cands[1]) < 25:  # distance in BGR space
+        if np.linalg.norm(cands[0] - cands[1]) < 25:  # distance in BGR space
             # If too close fallback to K=2 clustering
             k2 = KMeans(n_clusters=2, n_init=10, random_state=0).fit(X)
             cands = k2.cluster_centers_
@@ -136,55 +244,18 @@ class TeamAssigner:
     # Return a temporary team label for the player and collect statistics
     ## How many times a plaxer looks like team 1 or 2
     ## How often a player looks similar to the referee color
-    def get_player_team(self, frame, player_bbox, player_id):
-
-        color = self.get_player_color(frame, player_bbox).astype(np.float32)
-
-        # Count how many frames the player was observed
-        self.player_obs_counts[player_id] = self.player_obs_counts.get(player_id, 0) + 1
-
-        # Distances to the two team colors
-        c1 = np.asarray(self.team_colors[1], dtype=np.float32)
-        c2 = np.asarray(self.team_colors[2], dtype=np.float32)
-        d1 = np.linalg.norm(color - c1)
-        d2 = np.linalg.norm(color - c2)
-
-        # Assign the player to the closer team color
-        team = 1 if d1 < d2 else 2
-
-        # Count votes on referee similarity
-        if self.referee_color is not None:
-            cref = np.asarray(self.referee_color, dtype=np.float32)
-            dref = np.linalg.norm(color - cref)
-
-            # Check brightness in HSV to focus in darker referee kits
-            col_uint8 = color.astype(np.uint8).reshape(1, 1, 3)
-            h, s, v = cv2.cvtColor(col_uint8, cv2.COLOR_BGR2HSV)[0, 0]
-
-            # If referee color is clearly closer than either team color, add a referee vote for the player
-            if dref < 0.6 * min(d1, d2):
-                prev = self.ref_vote_counts.get(player_id, 0)
-                self.ref_vote_counts[player_id] = prev + 1
-        
-        # Collect team votes for the player
-        votes = self.team_vote_counts.get(player_id)
-        if votes is None:
-            votes = {1: 0, 2: 0}
-            self.team_vote_counts[player_id] = votes
-        votes[team] += 1
-
-        return team
+    def get_player_team(self, frame, player_bbox, player_id=None):
+        return self.infer_team_for_bbox(frame, player_bbox)
 
     # Infer the team 1 or 2 for a bbox using only color
     def infer_team_for_bbox(self, frame, bbox):
-
         color = self.get_player_color(frame, bbox).astype(np.float32)
+        color_lab = self._bgr_to_lab(color)
+        c1_lab = self._bgr_to_lab(self.team_colors[1])
+        c2_lab = self._bgr_to_lab(self.team_colors[2])
 
-        c1 = np.asarray(self.team_colors[1], dtype=np.float32)
-        c2 = np.asarray(self.team_colors[2], dtype=np.float32)
-
-        d1 = np.linalg.norm(color - c1)
-        d2 = np.linalg.norm(color - c2)
+        d1 = np.linalg.norm(color_lab - c1_lab)
+        d2 = np.linalg.norm(color_lab - c2_lab)
 
         return 1 if d1 < d2 else 2
     
@@ -225,3 +296,8 @@ class TeamAssigner:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (20, 20, 20), 2, cv2.LINE_AA)
 
         cv2.imwrite(out_path, img)
+
+    def _bgr_to_lab(self, color_bgr):
+        col = np.asarray(color_bgr, dtype=np.uint8).reshape(1, 1, 3)
+        lab = cv2.cvtColor(col, cv2.COLOR_BGR2LAB)[0, 0].astype(np.float32)
+        return lab

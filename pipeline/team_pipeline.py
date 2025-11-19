@@ -5,130 +5,109 @@ from config import Settings
 from utils import get_center_of_bbox
 from team_assigner import TeamAssigner
 
+# pipeline/team_pipeline.py
+
+import numpy as np
+import cv2
+
+from config import Settings
+from utils import get_center_of_bbox
+from team_assigner import TeamAssigner
+
 # Assign players and referees to teams based on color information and votes
 def assign_teams(tracks, settings: Settings):
+    """
+    Vereinfachte Team-Pipeline:
+    - Teamfarben einmal aus den ersten Frames bestimmen
+    - In jedem Frame Team basierend auf der aktuellen BBox-Farbe setzen
+    - Keine Votes mehr, keine track_id-basierte Logik
+    """
     team_assigner = TeamAssigner()
 
     video_path = str(settings.paths.input_video)
     num_frames = len(tracks["players"])
 
-    # 1) Wenige Frames für Farb-Schätzung laden
-    #    (gleichmäßig über das Video verteilt)
-    # Wie viele Frames maximal für K-Means genutzt werden sollen
-    sample_frames_team = 500
-    sample_frames_ref  = 500
-
-    num_samples = min(num_frames, max(sample_frames_team, sample_frames_ref))
+    # -----------------------------
+    # 1) Erste N Frames laden für die Farb-Bestimmung
+    # -----------------------------
+    sample_frames_team = 10
+    sample_frames_ref  = 50
+    max_color_frames = min(num_frames, max(sample_frames_team, sample_frames_ref))
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video: {video_path}")
 
-    # Gleichmäßig verteilte Frame-Indizes bestimmen
-    sample_indices = np.linspace(0, num_frames - 1, num_samples, dtype=int)
-    sample_index_set = set(sample_indices.tolist())
-
     sample_frames = []
-    frame_idx = 0
-    while True:
+    for frame_idx in range(max_color_frames):
         ret, frame = cap.read()
         if not ret:
             break
+        sample_frames.append(frame)
 
-        if frame_idx in sample_index_set:
-            sample_frames.append(frame)
-
-        frame_idx += 1
-        if len(sample_frames) >= num_samples:
-            break
-
-    # Build a matching tracks subset so that indices of frames and tracks align
+    # Tracks für die ersten Frames anpassen
     sample_tracks = {
-        "players": [],
-        "referees": [],
-        "goalkeepers": [],
-        "ball": [],
+        "players":   [tracks["players"][i]   for i in range(len(sample_frames))],
+        "referees":  [tracks["referees"][i]  for i in range(len(sample_frames))],
+        "goalkeepers":[tracks["goalkeepers"][i] for i in range(len(sample_frames))],
+        "ball":      [tracks["ball"][i]      for i in range(len(sample_frames))],
     }
-    for idx in sample_indices:
-        sample_tracks["players"].append(tracks["players"][idx])
-        sample_tracks["referees"].append(tracks["referees"][idx])
-        sample_tracks["goalkeepers"].append(tracks["goalkeepers"][idx])
-        sample_tracks["ball"].append(tracks["ball"][idx])
-
 
     cap.release()
 
-    # Team- und Schiri-Farben aus wenigen Frames schätzen
+    # -----------------------------
+    # 2) Team- und Schirifarben bestimmen
+    # -----------------------------
     team_assigner.assign_team_color(sample_frames, sample_tracks, sample_frames=sample_frames_team)
     team_assigner.assign_referee_color(sample_frames, sample_tracks, sample_frames=sample_frames_ref)
     team_assigner.save_color_debug(str(settings.paths.color_debug_image))
 
     # -----------------------------
-    # 2) Zweiter Durchlauf: alle Frames streamen,
-    #    um Team-Votes pro Spieler zu sammeln
+    # 3) Vollständigen Videodurchlauf: Team pro Frame setzen
     # -----------------------------
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video: {video_path}")
 
-    frame_idx = 0
-    while frame_idx < num_frames:
+    # Einfacher "sticky" Filter: bei unsicheren Frames altes Team behalten
+    last_team: dict[int, int] = {}  # track_id -> zuletzt verwendetes Team
+
+    for f_idx in range(num_frames):
         ret, frame = cap.read()
         if not ret:
             break
 
-        player_track = tracks["players"][frame_idx]
-        for player_id, track in player_track.items():
-            team_assigner.get_player_team(frame, track["bbox"], player_id)
+        for player_id, track in tracks["players"][f_idx].items():
+            bbox = track["bbox"]
 
-        frame_idx += 1
+            # Farbe des Spielers in diesem Frame
+            color = team_assigner.get_player_color(frame, bbox).astype(np.float32)
+
+            # Distanz zu den beiden Teamfarben (BGR)
+            c1 = np.asarray(team_assigner.team_colors[1], dtype=np.float32)
+            c2 = np.asarray(team_assigner.team_colors[2], dtype=np.float32)
+            d1 = np.linalg.norm(color - c1)
+            d2 = np.linalg.norm(color - c2)
+
+            # rohe Entscheidung: näher an Team 1 oder 2?
+            raw_team = 1 if d1 < d2 else 2
+
+            # Heuristik: unsichere Frames erkennen
+            #  - d1 und d2 sehr ähnlich  -> Farbe liegt "zwischen" den Teams
+            #  - beide Distanzen sehr groß -> Farbe passt zu keinem Team (Schatten, Rasen, etc.)
+            if abs(d1 - d2) < 15 or min(d1, d2) > 40:
+                # unsicher -> wenn es einen bisherigen Wert gibt, bleib dabei
+                team_id = last_team.get(player_id, raw_team)
+            else:
+                # klarer Fall -> neue Entscheidung übernehmen
+                team_id = raw_team
+
+            track["team"] = team_id
+            track["team_color"] = team_assigner.team_colors[team_id]
+            last_team[player_id] = team_id
+
 
     cap.release()
-
-        # -----------------------------
-    # 3) Mehrheitsteam pro Spieler bestimmen (wie früher)
-    # -----------------------------
-    for player_id, votes_dict in team_assigner.team_vote_counts.items():
-        votes_team1 = votes_dict.get(1, 0)
-        votes_team2 = votes_dict.get(2, 0)
-        # Mehrheits-Team (bei Gleichstand Team 1)
-        majority_team = 1 if votes_team1 >= votes_team2 else 2
-        team_assigner.player_team_dict[player_id] = majority_team
-
-    # -----------------------------
-    # 3) Finale Labels berechnen (wie vorher)
-    # -----------------------------
-    cfg = settings.referee
-    final_labels = {}  # mapping player_id: 0 (referee), 1 (team 1), 2 (team 2)
-
-    for player_id, obs_count in team_assigner.player_obs_counts.items():
-        ref_votes = team_assigner.ref_vote_counts.get(player_id, 0)
-        default_team = team_assigner.player_team_dict.get(player_id, 1)
-
-        if (
-            team_assigner.referee_color is not None
-            and obs_count >= cfg.min_observations
-            and ref_votes >= cfg.min_votes
-            and ref_votes >= cfg.min_ratio * obs_count
-        ):
-            final_labels[player_id] = 0
-        else:
-            final_labels[player_id] = default_team
-
-    # Tracks umschreiben (wie vorher)
-    for frame_idx, player_track in enumerate(tracks["players"]):
-        for player_id, track in list(player_track.items()):
-            team = final_labels.get(player_id, 1)
-
-            if team == 0:
-                tracks["referees"][frame_idx][player_id] = track
-                del tracks["players"][frame_idx][player_id]
-            else:
-                tracks["players"][frame_idx][player_id]["team"] = team
-                tracks["players"][frame_idx][player_id]["team_color"] = (
-                    team_assigner.team_colors[team]
-                )
-
     return tracks, team_assigner
 
 # Assign each goalkeeper to a team based on thei average horizontal position

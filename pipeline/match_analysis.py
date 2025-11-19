@@ -14,16 +14,20 @@ def run_match_analysis(settings: Settings | None = None):
     paths = settings.paths
     tracking = settings.tracking
 
-    # Load tracking information (ohne video_frames)
+    # Load tracking information
+    print("[STEP 1] - loading tracking information...")
     tracker, tracks = load_video_and_tracks(settings)
 
     # Team classification and goalkeeper assignment
+    print("[STEP 2] - team classification and goalkeeper assignment...")
     tracks, team_assigner = assign_teams(tracks, settings)
     tracks = assign_goalkeepers_to_teams(tracks, team_assigner)
 
+    print("[STEP 3] - computing team ball controll over all frames...")
     # Compute team ball control over all frames
     team_ball_control = compute_team_ball_control(tracks, settings)
 
+    print("[STEP 4] - drawing anntoations...")
     # Annotiertes Video direkt streamend schreiben
     tracker.draw_annotations_to_video(
         str(paths.input_video),
@@ -33,6 +37,7 @@ def run_match_analysis(settings: Settings | None = None):
         fps=tracking.fps,
     )
 
+    print("[STEP 5] - exporting analytics...")
     # Export analytics
     export_analytics(tracks, team_ball_control, settings)
 
