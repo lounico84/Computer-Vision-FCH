@@ -1,29 +1,55 @@
 import numpy as np
 import cv2
 from tqdm import tqdm
-
-from config import Settings
-from utils import get_center_of_bbox
-from team_assigner import TeamAssigner
-
-# pipeline/team_pipeline.py
-
-import numpy as np
-import cv2
+import pickle
+import os
 
 from config import Settings
 from utils import get_center_of_bbox
 from team_assigner import TeamAssigner
 
 # Assign players and referees to teams based on color information and votes
-def assign_teams(tracks, settings: Settings):
+def assign_teams(tracks,
+                 settings: Settings,
+                 stub_path: str | None = None,
+                 read_from_stub: bool = False,
+                 resume_from_stub: bool = False,
+                 save_stub: bool = True,
+                 frame_skip: int = 1
+):
     """
     Vereinfachte Team-Pipeline:
     - Teamfarben einmal aus den ersten Frames bestimmen
     - In jedem Frame Team basierend auf der aktuellen BBox-Farbe setzen
     - Keine Votes mehr, keine track_id-basierte Logik
     """
-    team_assigner = TeamAssigner()
+
+    # 0) Optional: Stub laden
+    if stub_path and os.path.exists(stub_path):
+        with open(stub_path, "rb") as f:
+            cached_tracks, cached_team_assigner = pickle.load(f)
+
+        already_done = len(cached_tracks["players"])
+        total_frames = len(tracks["players"])
+
+        if resume_from_stub and already_done < total_frames:
+            print(f"[STEP 2] Resume: found {already_done} frames, resuming until {total_frames}...")
+            # Wir übernehmen die bestehenden Teamdaten in 'tracks'
+            for key in ("players", "referees", "goalkeepers"):
+                for i in range(already_done):
+                    tracks[key][i] = cached_tracks[key][i]
+
+            team_assigner = cached_team_assigner
+            start_frame = already_done
+        elif read_from_stub:
+            print(f"[STEP 2] Loaded complete team data from {stub_path}")
+            return cached_tracks, cached_team_assigner
+        else:
+            start_frame = 0
+            team_assigner = TeamAssigner()
+    else:
+        start_frame = 0
+        team_assigner = TeamAssigner()
 
     video_path = str(settings.paths.input_video)
     num_frames = len(tracks["players"])
@@ -40,11 +66,20 @@ def assign_teams(tracks, settings: Settings):
         raise RuntimeError(f"Could not open video: {video_path}")
 
     sample_frames = []
+    if frame_skip < 1:
+        frame_skip = 1
+
     for frame_idx in range(max_color_frames):
         ret, frame = cap.read()
         if not ret:
             break
         sample_frames.append(frame)
+
+        # gleiche Skip-Logik wie beim Tracking
+        for _ in range(frame_skip - 1):
+            ret_skip, _ = cap.read()
+            if not ret_skip:
+                break
 
     # Tracks für die ersten Frames anpassen
     sample_tracks = {
@@ -69,11 +104,20 @@ def assign_teams(tracks, settings: Settings):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video: {video_path}")
+    
+    if frame_skip < 1:
+        frame_skip = 1
+
+    physical_start_frame = start_frame * frame_skip
+    cap.set(cv2.CAP_PROP_POS_FRAMES, physical_start_frame)
 
     # Einfacher "sticky" Filter: bei unsicheren Frames altes Team behalten
     last_team: dict[int, int] = {}  # track_id -> zuletzt verwendetes Team
 
-    for f_idx in tqdm(range(num_frames), total=num_frames, desc="Progress"):
+    c1 = np.asarray(team_assigner.team_colors[1], dtype=np.float32)
+    c2 = np.asarray(team_assigner.team_colors[2], dtype=np.float32)
+
+    for f_idx in tqdm(range(start_frame, num_frames), total=num_frames - start_frame, desc="Progress"):
         ret, frame = cap.read()
         if not ret:
             break
@@ -85,8 +129,6 @@ def assign_teams(tracks, settings: Settings):
             color = team_assigner.get_player_color(frame, bbox).astype(np.float32)
 
             # Distanz zu den beiden Teamfarben (BGR)
-            c1 = np.asarray(team_assigner.team_colors[1], dtype=np.float32)
-            c2 = np.asarray(team_assigner.team_colors[2], dtype=np.float32)
             d1 = np.linalg.norm(color - c1)
             d2 = np.linalg.norm(color - c2)
 
@@ -107,8 +149,19 @@ def assign_teams(tracks, settings: Settings):
             track["team_color"] = team_assigner.team_colors[team_id]
             last_team[player_id] = team_id
 
+        # Frames überspringen, damit f_idx zu den gleichen Frames wie beim Tracking passt
+        for _ in range(frame_skip - 1):
+            ret_skip, _ = cap.read()
+            if not ret_skip:
+                break
 
     cap.release()
+
+    # 4) Optional: Ergebnis cachen
+    if save_stub and stub_path:
+        with open(stub_path, "wb") as f:
+            pickle.dump((tracks, team_assigner), f)
+
     return tracks, team_assigner
 
 # Assign each goalkeeper to a team based on thei average horizontal position

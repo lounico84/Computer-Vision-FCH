@@ -20,7 +20,7 @@ def run_match_analysis(settings: Settings | None = None):
 
     # Team classification and goalkeeper assignment
     print("[STEP 2] - team classification and goalkeeper assignment...")
-    tracks, team_assigner = assign_teams(tracks, settings)
+    tracks, team_assigner = assign_teams(tracks, settings, stub_path=paths.team_stub, read_from_stub=True, save_stub=True, frame_skip=tracking.frame_skip)
     tracks = assign_goalkeepers_to_teams(tracks, team_assigner)
 
     print("\n[STEP 3] - computing team ball controll over all frames...")
@@ -35,6 +35,7 @@ def run_match_analysis(settings: Settings | None = None):
         team_ball_control,
         output_path=str(paths.output_video),
         fps=tracking.fps,
+        frame_skip=tracking.frame_skip
     )
 
     print("\n[STEP 5] - exporting analytics...")

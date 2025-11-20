@@ -13,16 +13,17 @@ class PathConfig:
     input_video: Path = "input_videos_match/Test/kuesnacht_test_clip4.MP4"
 
     # Output
-    output_video: Path = "output_video_match/output_video_k_4.avi"
-    color_debug_image: Path = "output_video_match/color_debug_4.png"
+    output_video: Path = "output_video_match/output_video_k_4_25.avi"
+    color_debug_image: Path = "output_video_match/color_debug_4_25.png"
 
     # Stubs
-    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_4.pkl"
+    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_4_25.pkl"
+    team_stub: Path = PROJECT_ROOT / "stubs/team_stubs_k_4_25.pkl"
 
     # Analytics
-    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events_4.csv"
-    pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1_4.png"
-    pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2_4.png"
+    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events_4_25.csv"
+    pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1_4_25.png"
+    pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2_4_25.png"
 
     # Calibration
     pitch_image: Path = PROJECT_ROOT / "calibration/pictures/fch_fussballfeld.jpg"
@@ -34,9 +35,11 @@ class PathConfig:
 # Configuration for model inference and tracking behavior
 @dataclass
 class TrackingConfig:
-    fps: int = 60
+    fps: int = 30
     read_tracks_from_stub: bool = True
+    resume_from_stub: bool = True
     max_ball_interpolation_gap: int = 20
+    frame_skip: int = 2
 
 # Thresholds used to classify whether a player is actually a referee
 @dataclass

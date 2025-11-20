@@ -7,6 +7,7 @@ import pandas as pd
 import os
 import torch
 from tqdm import tqdm
+from math import ceil
 from utils import get_bbox_width, get_center_of_bbox
 
 class Tracker:
@@ -411,7 +412,14 @@ class Tracker:
 
         return new_tracks
     
-    def get_object_tracks_from_video(self, video_path, read_from_stub=False, stub_path=None, batch_size=32, resume_from_stub=False):
+    def get_object_tracks_from_video(self,
+                                     video_path,
+                                     read_from_stub=False,
+                                     stub_path=None,
+                                     batch_size=32,
+                                     resume_from_stub=False,
+                                     frame_skip: int = 1
+    ):
         """
         Speicher-schonende Variante:
         - liest das Video frame-weise mit cv2.VideoCapture
@@ -420,6 +428,25 @@ class Tracker:
         """
 
         # Falls Stub genutzt werden soll und existiert: direkt laden
+    def get_object_tracks_from_video(
+    self,
+    video_path,
+    read_from_stub=False,
+    stub_path=None,
+    batch_size=32,
+    resume_from_stub=False,
+    frame_skip: int = 1,
+    ):
+        """
+        Speicher-schonende Variante:
+        - liest das Video frame-weise mit cv2.VideoCapture
+        - verarbeitet Frames in Batches
+        - hält NIE das ganze Video im RAM
+        - optional: kann von einem vorhandenen Stub (.pkl) weitermachen (resume_from_stub=True)
+        - frame_skip: nur jede n-te Frame verarbeiten (z.B. 2 => jede 2. Frame)
+        """
+
+        # Fall 1: altes Verhalten – kompletten Stub nur laden und zurückgeben
         if read_from_stub and not resume_from_stub and stub_path is not None and os.path.exists(stub_path):
             with open(stub_path, 'rb') as f:
                 tracks = pickle.load(f)
@@ -430,15 +457,21 @@ class Tracker:
             raise RuntimeError(f"Could not open video: {video_path}")
         
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if frame_skip < 1:
+            frame_skip = 1
 
-        # Resume from pkl file
+        # effektive Anzahl verarbeiteter Frames (z.B. 60fps, frame_skip=2 => ~30fps)
+        effective_total_frames = ceil(total_frames / frame_skip)
+
+        # Fall 2: Von vorhandenen Tracks weiterrechnen (Resume)
         if resume_from_stub and stub_path is not None and os.path.exists(stub_path):
             with open(stub_path, 'rb') as f:
                 tracks = pickle.load(f)
-            # Anzahl bereits bearbeiteter Frames bestimmen
+            # Anzahl bereits bearbeiteter (effektiver) Frames bestimmen
             already_processed_frames = len(tracks.get("players", []))
-            # Video an diese Stelle springen
-            cap.set(cv2.CAP_PROP_POS_FRAMES, already_processed_frames)
+            # Video an entsprechende physische Frameposition springen
+            physical_start_frame = already_processed_frames * frame_skip
+            cap.set(cv2.CAP_PROP_POS_FRAMES, physical_start_frame)
         else:
             # Neu von vorne starten
             tracks = {
@@ -449,16 +482,23 @@ class Tracker:
             }
             already_processed_frames = 0
 
-        pbar = tqdm(total=total_frames, desc="YOLO tracking", initial=already_processed_frames)
+        # Progressbar startet bei effective_initial
+        pbar = tqdm(total=effective_total_frames, desc="YOLO tracking", initial=already_processed_frames)
 
         while True:
-            # 1) Batch von Frames einlesen
+            # 1) Batch von Frames einlesen (nur jede frame_skip-te)
             frames_batch = []
             for _ in range(batch_size):
                 ret, frame = cap.read()
                 if not ret:
                     break
                 frames_batch.append(frame)
+
+                # Zusätzliche Frames zwischen den Nutz-Frames überspringen
+                for _ in range(frame_skip - 1):
+                    ret_skip, _ = cap.read()
+                    if not ret_skip:
+                        break
 
             if not frames_batch:
                 break  # Video zu Ende
@@ -532,7 +572,7 @@ class Tracker:
 
         return tracks
     
-    def draw_annotations_to_video(self, input_video_path, tracks, team_ball_control, output_path, fps=25):
+    def draw_annotations_to_video(self, input_video_path, tracks, team_ball_control, output_path, fps=30, frame_skip: int = 1):
         """
         Liest das Input-Video frame-weise,
         zeichnet die Overlays und schreibt direkt in eine Ausgabedatei.
@@ -551,9 +591,13 @@ class Tracker:
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if frame_skip < 1:
+            frame_skip = 1
+
+        effective_total_frames = ceil(total_frames / frame_skip)
         frame_num = 0
 
-        for _ in tqdm(range(total_frames), desc="Progress"):
+        for _ in tqdm(range(effective_total_frames), desc="Progress"):
             ret, frame = cap.read()
             if not ret:
                 break
@@ -564,9 +608,6 @@ class Tracker:
             ball_dict = tracks["ball"][frame_num] if frame_num < len(tracks["ball"]) else {}
             referee_dict = tracks["referees"][frame_num] if frame_num < len(tracks["referees"]) else {}
             goalkeeper_dict = tracks["goalkeepers"][frame_num] if frame_num < len(tracks["goalkeepers"]) else {}
-
-            # ---- exakt deine bestehende Zeichenlogik wiederverwenden ----
-            # (kopiert aus draw_annotations, nur ohne output_video_frame)
 
             # Draw Players
             for track_id, player in player_dict.items():
@@ -594,10 +635,14 @@ class Tracker:
             # Draw Team Ball Control
             frame_copy = self.draw_team_ball_control(frame_copy, frame_num, team_ball_control)
 
-            # Direkt ins Video schreiben
             out.write(frame_copy)
-
             frame_num += 1
+
+            # Zwischengelagerte Frames überspringen
+            for _ in range(frame_skip - 1):
+                ret_skip, _ = cap.read()
+                if not ret_skip:
+                    break
 
         cap.release()
         out.release()
