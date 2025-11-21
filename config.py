@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
-PROJECT_ROOT = Path("project/Computer-Vision-FCH")
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 # Centralized file path configuration
 @dataclass
@@ -21,7 +21,7 @@ class PathConfig:
     team_stub: Path = PROJECT_ROOT / "stubs/team_stubs_k_4_30.pkl"
 
     # Analytics
-    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events_4_30.csv"
+    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events/frame_events_4_30.csv"
     pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1_4_32.png"
     pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2_4_32.png"
 
