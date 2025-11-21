@@ -603,8 +603,7 @@ class Tracker:
         if not cap.isOpened():
             raise RuntimeError(f"Could not open video: {input_video_path}")
 
-        # Videogrösse ermitteln
-        width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -616,6 +615,12 @@ class Tracker:
 
         effective_total_frames = ceil(total_frames / frame_skip)
         frame_num = 0
+
+        # Zustandsvariablen für stabilen Ballmarker
+        prev_ball_center = None
+        max_jump_px = 150
+        min_ball_size = 3
+        max_ball_size = 80
 
         for _ in tqdm(range(effective_total_frames), desc="Progress"):
             ret, frame = cap.read()
@@ -632,25 +637,47 @@ class Tracker:
             # Draw Players
             for track_id, player in player_dict.items():
                 raw = player.get("team_color")
-                color = (0,255,255) if raw is None else tuple(int(x) for x in np.asarray(raw).tolist())
+                color = (0, 255, 255) if raw is None else tuple(int(x) for x in np.asarray(raw).tolist())
                 frame_copy = self.draw_ellipse(frame_copy, player["bbox"], color, track_id)
 
-                if player.get('has_ball', False):
-                    frame_copy = self.draw_triangle(frame_copy, player['bbox'], (0,0,255))
+                if player.get("has_ball", False):
+                    frame_copy = self.draw_triangle(frame_copy, player["bbox"], (0, 0, 255))
 
             # Draw Referees
             for _, referee in referee_dict.items():
-                frame_copy = self.draw_ellipse(frame_copy, referee["bbox"], (0,255,255))
+                frame_copy = self.draw_ellipse(frame_copy, referee["bbox"], (0, 255, 255))
 
             # Draw Goalkeepers
             for track_id, goalkeeper in goalkeeper_dict.items():
-                frame_copy = self.draw_ellipse(frame_copy, goalkeeper["bbox"], (255,0,0), track_id)
-                if goalkeeper.get('has_ball', False):
-                    frame_copy = self.draw_triangle(frame_copy, goalkeeper['bbox'], (0,0,255))
+                frame_copy = self.draw_ellipse(frame_copy, goalkeeper["bbox"], (255, 0, 0), track_id)
+                if goalkeeper.get("has_ball", False):
+                    frame_copy = self.draw_triangle(frame_copy, goalkeeper["bbox"], (0, 0, 255))
 
-            # Draw Ball
+            # Draw Ball mit Plausibilitäts-Filter
             for _, ball in ball_dict.items():
-                frame_copy = self.draw_triangle(frame_copy, ball["bbox"], (0,255,0))
+                bbox = ball["bbox"]
+                x1, y1, x2, y2 = bbox
+                w = x2 - x1
+                h = y2 - y1
+
+                # Größenfilter
+                if w < min_ball_size or h < min_ball_size or w > max_ball_size or h > max_ball_size:
+                    continue
+
+                cx, cy = get_center_of_bbox(bbox)
+
+                plausible = True
+                if prev_ball_center is not None:
+                    dx = cx - prev_ball_center[0]
+                    dy = cy - prev_ball_center[1]
+                    dist = (dx * dx + dy * dy) ** 0.5
+                    if dist > max_jump_px:
+                        plausible = False
+
+                if plausible:
+                    frame_copy = self.draw_triangle(frame_copy, bbox, (0, 255, 0))
+                    prev_ball_center = (cx, cy)
+                # unplausible Beobachtung -> nichts zeichnen
 
             # Draw Team Ball Control
             frame_copy = self.draw_team_ball_control(frame_copy, frame_num, team_ball_control)

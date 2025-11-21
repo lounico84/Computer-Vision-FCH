@@ -171,6 +171,57 @@ def detect_passes(
     print(f"[pass_maps] detect_passes: {len(passes)} Pässe erkannt.")
     return passes
 
+def classify_pass_types(
+    passes,
+    pitch_length,
+    clearance_min_distance=25.0,
+    defensive_third_ratio=1.0 / 3.0,
+):
+    """
+    Annotiert jeden Pass in 'passes' mit einem einfachen Typ:
+      - "clearance": langer Befreiungsschlag aus dem eigenen Defensivdrittel
+      - "completed_pass": angekommener Pass
+      - "failed_pass": versuchter Pass, der beim Gegner landet / verloren geht
+
+    Heuristik:
+      - Defensivdrittel:
+          Team 1: x <= pitch_length * defensive_third_ratio
+          Team 2: x >= pitch_length * (1 - defensive_third_ratio)
+      - Clearance:
+          Start im Defensivdrittel UND Distanz >= clearance_min_distance
+    """
+
+    for p in passes:
+        team = p.get("team", 0)
+        sx = p.get("start_x", 0.0)
+        ex = p.get("end_x", 0.0)
+        sy = p.get("start_y", 0.0)
+        ey = p.get("end_y", 0.0)
+        completed = p.get("completed", False)
+
+        dx = ex - sx
+        dy = ey - sy
+        dist = (dx * dx + dy * dy) ** 0.5
+
+        # Defensivdrittel je nach Team
+        if team == 1:
+            in_def_third = sx <= pitch_length * defensive_third_ratio
+        elif team == 2:
+            in_def_third = sx >= pitch_length * (1.0 - defensive_third_ratio)
+        else:
+            in_def_third = False
+
+        # Default-Typ
+        pass_type = "completed_pass" if completed else "failed_pass"
+
+        # Clearance-Heuristik
+        if in_def_third and dist >= clearance_min_distance:
+            pass_type = "clearance"
+
+        p["type"] = pass_type
+
+    return passes
+
 def _plot_pass_map(
     passes,
     team,
@@ -181,7 +232,7 @@ def _plot_pass_map(
 ):
     """
     Zeichnet eine Pass-Map für ein bestimmtes Team:
-    - Hintergrund: Spielfeldbild (optional)
+    - Hintergrund: Spielfeldbild
     - blaue Linien = angekommene Pässe
     - rote Linien  = Fehlpässe
     """
@@ -283,6 +334,23 @@ def create_pass_maps_from_csv(
         speed_threshold=speed_threshold,
         min_distance=min_distance,
         min_possession_frames=analytics_cfg.pass_min_frames
+    )
+
+    # Pass-Typen klassifizieren (Pass vs Fehlpass vs Klärung)
+    passes = classify_pass_types(
+        passes,
+        pitch_length=pitch_length,
+    )
+
+    # Optional: kleine Statistik auf die Konsole
+    num_total = len(passes)
+    num_clear = sum(1 for p in passes if p.get("type") == "clearance")
+    num_completed = sum(1 for p in passes if p.get("type") == "completed_pass")
+    num_failed = sum(1 for p in passes if p.get("type") == "failed_pass")
+
+    print(
+        f"[pass_maps] Summary: total={num_total}, "
+        f"completed={num_completed}, failed={num_failed}, clearances={num_clear}"
     )
 
     _plot_pass_map(
