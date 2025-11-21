@@ -71,6 +71,11 @@ def detect_passes(
             start = i
     segments.append((cur_owner, cur_team, start, n - 1))
 
+    # Referenz-FPS für framebasierte Schwellwerte (30 fps als Standard)
+    fps_ref = 30.0
+    # effektive Mindestanzahl Frames für Ballbesitz, skaliert mit den tatsächlichen fps
+    min_possession_frames_eff = max(1, int(round(min_possession_frames * fps / fps_ref)))
+
     max_gap_frames = int(max_gap_seconds * fps)
 
     def valid_before(idx):
@@ -94,7 +99,7 @@ def detect_passes(
             continue
 
         seg_len = end_i - start_i + 1
-        if seg_len < min_possession_frames:
+        if seg_len < min_possession_frames_eff:
             # zu kurze Ballkontrolle -> z.B. Zweikampf-Pingpong
             continue
 
@@ -124,17 +129,25 @@ def detect_passes(
         own2, team2, start_j, end_j = segments[candidate_j]
 
         # --- Geschwindigkeitskriterium: es muss einen "Kick" dazwischen geben ---
+        # --- Geschwindigkeitskriterium: es muss einen "Kick" dazwischen geben ---
         t0, t1 = end_i, start_j
         if t1 <= t0:
             continue
 
-        window_speeds = speed[t0 : t1 + 1]
+        # fps-stabiles Zeitfenster für Kick-Detektion (z. B. 0.20 Sekunden)
+        kick_window_seconds = 0.20
+        kick_window_frames = int(round(kick_window_seconds * fps))
+
+        # Bereich begrenzen: nur t0 .. t0+kick_window_frames prüfen (oder bis t1)
+        t_end = min(t1, t0 + kick_window_frames)
+
+        window_speeds = speed[t0 : t_end + 1]
         finite_mask = np.isfinite(window_speeds)
         if not finite_mask.any():
             continue
 
+        # Kick dann vorhanden, wenn mind. ein Frame über Schwellwert liegt
         if not (window_speeds[finite_mask] >= speed_threshold).any():
-            # kein Frame mit ausreichender Ballgeschwindigkeit -> eher kein Pass
             continue
 
         # --- Start-/Endposition anhand der Ballposition bestimmen ---

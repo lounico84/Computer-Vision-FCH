@@ -16,7 +16,7 @@ def load_video_and_tracks(settings: Settings):
         str(paths.input_video),
         read_from_stub=tracking_cfg.read_tracks_from_stub,
         stub_path=str(paths.tracks_stub),
-        resume_from_stub=tracking_cfg.resume_from_stub if hasattr(tracking_cfg, "resume_from_stub") else False,
+        resume_from_stub=tracking_cfg.resume_track_from_stub if hasattr(tracking_cfg, "resume_track_from_stub") else False,
         frame_skip=tracking_cfg.frame_skip if hasattr(tracking_cfg, "frame_skip") else 1,
     )
 

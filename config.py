@@ -13,17 +13,17 @@ class PathConfig:
     input_video: Path = "input_videos_match/Test/kuesnacht_test_clip4.MP4"
 
     # Output
-    output_video: Path = "output_video_match/output_video_k_4_25.avi"
-    color_debug_image: Path = "output_video_match/color_debug_4_25.png"
+    output_video: Path = "output_video_match/output_video_k_4_30.avi"
+    color_debug_image: Path = "output_video_match/color_debug_4_30.png"
 
     # Stubs
-    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_4_25.pkl"
-    team_stub: Path = PROJECT_ROOT / "stubs/team_stubs_k_4_25.pkl"
+    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_4_30.pkl"
+    team_stub: Path = PROJECT_ROOT / "stubs/team_stubs_k_4_30.pkl"
 
     # Analytics
-    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events_4_25.csv"
-    pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1_4_25.png"
-    pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2_4_25.png"
+    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events_4_30.csv"
+    pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1_4_31.png"
+    pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2_4_31.png"
 
     # Calibration
     pitch_image: Path = PROJECT_ROOT / "calibration/pictures/fch_fussballfeld.jpg"
@@ -36,8 +36,10 @@ class PathConfig:
 @dataclass
 class TrackingConfig:
     fps: int = 30
-    read_tracks_from_stub: bool = True
-    resume_from_stub: bool = True
+    read_tracks_from_stub: bool = True      # read current yolo predictions and don't predict again
+    resume_track_from_stub: bool = True     # continue with frames for training
+    read_team_from_stub: bool = True       # read current k-means team assignments
+    resume_team_from_stub: bool = True      # continue with frames for training
     max_ball_interpolation_gap: int = 20
     frame_skip: int = 2
 

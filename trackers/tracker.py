@@ -8,7 +8,7 @@ import os
 import torch
 from tqdm import tqdm
 from math import ceil
-from utils import get_bbox_width, get_center_of_bbox
+from utils import get_bbox_width, get_center_of_bbox, get_bbox_height
 
 class Tracker:
     def __init__(self, model_path):
@@ -174,12 +174,13 @@ class Tracker:
 
         x_center, _ = get_center_of_bbox(bbox)
         width = get_bbox_width(bbox)
+        height = get_bbox_height(bbox)
 
         # Draw the ellipse at the player's feet
         cv2.ellipse(
             frame,
-            center=(x_center,y2),
-            axes=(int(width), int(0.35*width)),
+            center=(x_center, y2),
+            axes=(int(width), int(0.35 * width)),
             angle=0.0,
             startAngle=-45,
             endAngle=235,
@@ -188,34 +189,53 @@ class Tracker:
             lineType=cv2.LINE_4
         )
 
-        # Create a small rectangle above the ellipse for the track ID
-        rectangle_width = 40
-        rectangle_height = 20
-        x1_rect = x_center - rectangle_width//2
-        x2_rect = x_center + rectangle_width//2
-        y1_rect = (y2 - rectangle_height//2) + 15
-        y2_rect = (y2 + rectangle_height//2) + 15
+        # ============================
+        # Dynamic Track-ID Box Size
+        # ============================
+
+        # Scale box clearly relative to player size
+        # Höhe stärker gewichten, damit Spieler vorne/hinten deutlich unterschiedliche Boxgrößen haben
+        rectangle_height = int(max(height * 0.25, 10))   # min 10px, ca. 25% der BBox-Höhe
+        rectangle_width = int(max(width * 0.70, 25))     # min 25px, ca. 70% der BBox-Breite
+
+        x1_rect = x_center - rectangle_width // 2
+        x2_rect = x_center + rectangle_width // 2
+
+        # Move rectangle slightly above the ellipse
+        y1_rect = y2 + 8
+        y2_rect = y1_rect + rectangle_height
 
         if track_id is not None:
-            cv2.rectangle(frame,
-                          (int(x1_rect),int(y1_rect)),
-                          (int(x2_rect),int(y2_rect)),
-                          color,
-                          cv2.FILLED)
-            # Adjust text if ID is > 99
-            x1_text = x1_rect+12
-            if track_id > 99:
-                x1_text -= 10
-            
-            # Put the track ID number inside the rectangle
+            # Draw label box
+            cv2.rectangle(
+                frame,
+                (int(x1_rect), int(y1_rect)),
+                (int(x2_rect), int(y2_rect)),
+                color,
+                cv2.FILLED
+            )
+
+            # ======================
+            # Dynamic Text Size
+            # ======================
+            font_scale = max(rectangle_height / 22, 0.4)   # skaliert stärker und hat eine Untergrenze
+            text_y = y1_rect + int(rectangle_height * 0.75)
+
+            # Center text horizontally
+            text = f"{track_id}"
+            text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2)[0]
+            text_x = x_center - text_size[0] // 2
+
+            # Put Track ID in box
             cv2.putText(
                 frame,
-                f"{track_id}",
-                (int(x1_text), int(y1_rect+15)),
+                text,
+                (int(text_x), int(text_y)),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                (0,0,0),
-                2
+                font_scale,
+                (0, 0, 0),
+                2,
+                cv2.LINE_AA
             )
 
         return frame

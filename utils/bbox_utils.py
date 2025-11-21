@@ -10,3 +10,6 @@ def get_bbox_width(bbox):
 # Calculate the euclidean distance between two points p1 and p2
 def measure_distance(p1, p2):
     return ((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)**0.5
+
+def get_bbox_height(bbox):
+    return bbox[3]-bbox[1]
