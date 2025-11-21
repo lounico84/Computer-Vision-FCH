@@ -12,179 +12,161 @@ analytics_cfg = s.analytics
 def detect_passes(
     df,
     fps,
-    speed_threshold=5.0,      # minimale Ballgeschwindigkeit, um als "Pass" zu zählen
-    min_distance=7.0,         # minimale Passdistanz in Metern
-    min_flight_frames=3,      # (ungenutzt, nur für Kompatibilität)
-    landing_window_frames=10, # (ungenutzt)
-    min_possession_frames=3,  # Spieler muss mind. so viele Frames Ballkontrolle haben
-    max_gap_seconds=6.0,      # max. Zeit zwischen Abspiel und neuer Kontrolle
+    speed_threshold=4.5,      # geringere Schwelle, da Ballgeschwindigkeit vorher geglättet wird
+    min_distance=5.0,         # min. 5m – sonst Dribbling/Abgabe
+    min_possession_frames=4,  # Sender muss den Ball stabil gehabt haben
+    kick_window_seconds=0.12, # engeres Kick-Fenster -> realistischere Passmomente
+    max_gap_seconds=3.0       # Empfänger muss innerhalb dieses Fensters Ball erhalten
 ):
     """
-    Konservative Pass-Erkennung basierend auf stabilen Ballbesitz-Segmenten.
+    Verbesserte, extrem robuste Pass-Erkennung.
+    Nutzt stabilisierte Besitzdaten + smoothe Ballbahn (Savitzky-Golay).
 
-    Vorgehen:
-      - Baue Segmente (owner_id, team, start_idx, end_idx) mit konstantem ball_owner_id.
-      - Ein Pass ist ein Übergang von Segment A -> Segment B, wenn:
-          * A: echter Spieler (owner != -1, team in {1,2})
-          * Länge(A) >= min_possession_frames
-          * B: echter Spieler, owner_B != owner_A, team_B in {1,2}
-          * Zeitabstand <= max_gap_seconds
-          * Zwischen A-Ende und B-Start existiert mind. ein Frame mit
-            ball_speed_m_s >= speed_threshold
-          * Distanz(Ballposition Abspiel -> Ballposition Annahme) >= min_distance
-      - completed = True, wenn Team(A) == Team(B), sonst Fehlpass/Interception.
-
-    Rückgabe: Liste von dicts mit
-      {
-        "team": Team des Passgebers (1 oder 2),
-        "start_x": x in m (Ballposition beim Abspiel),
-        "start_y": y in m,
-        "end_x": x in m (Ballposition beim ersten Kontakt des Empfängers),
-        "end_y": y in m,
-        "completed": True/False
-      }
+    Bedingungen:
+      - A: Segment von owner_id X
+      - B: Nächstes Segment von owner_id Y, Y != X
+      - In t0..t0+kick_window muss ball_speed >= threshold sein
+      - Flugdistanz >= min_distance
+      - B beginnt nicht mehr als max_gap_seconds nach A
     """
 
+    # -----------------------------------------------------
+    # 1) Nützliche Arrays extrahieren
+    # -----------------------------------------------------
     owners = df["ball_owner_id"].to_numpy()
     teams = df["ball_owner_team"].to_numpy()
     ball_x = df["ball_x_m"].to_numpy()
     ball_y = df["ball_y_m"].to_numpy()
-    speed = df["ball_speed_m_s"].to_numpy()
+    speed_raw = df["ball_speed_m_s"].to_numpy()
 
     n = len(df)
-    passes = []
+    if n < 5:
+        return []
 
-    if n == 0:
-        print("[pass_maps] detect_passes: 0 Pässe erkannt (leerer DF).")
-        return passes
+    # -----------------------------------------------------
+    # 2) Glättung der Ballbahn (Savitzky-Golay)
+    # -----------------------------------------------------
+    from scipy.signal import savgol_filter
 
-    # --- 1) Segmente von konstantem Besitzer bauen ---
+    window = 7 if n >= 7 else (n // 2 * 2 + 1)
+    if window < 5:
+        window = 5
+
+    x_smooth = savgol_filter(ball_x, window_length=window, polyorder=2, mode="nearest")
+    y_smooth = savgol_filter(ball_y, window_length=window, polyorder=2, mode="nearest")
+
+    # neue Geschwindigkeit berechnen
+    speed = np.sqrt(np.diff(x_smooth, prepend=x_smooth[0])**2 +
+                    np.diff(y_smooth, prepend=y_smooth[0])**2) * fps
+
+    # -----------------------------------------------------
+    # 3) Besitzersegmente bauen (owner_id konstant)
+    # -----------------------------------------------------
     segments = []
     cur_owner = owners[0]
     cur_team = teams[0]
     start = 0
+
     for i in range(1, n):
         if owners[i] != cur_owner:
             segments.append((cur_owner, cur_team, start, i - 1))
             cur_owner = owners[i]
             cur_team = teams[i]
             start = i
+
     segments.append((cur_owner, cur_team, start, n - 1))
 
-    # Referenz-FPS für framebasierte Schwellwerte (30 fps als Standard)
-    fps_ref = 30.0
-    # effektive Mindestanzahl Frames für Ballbesitz, skaliert mit den tatsächlichen fps
-    min_possession_frames_eff = max(1, int(round(min_possession_frames * fps / fps_ref)))
-
+    # Zeitskalierung
+    min_len = max(1, int(min_possession_frames * fps / 30))
     max_gap_frames = int(max_gap_seconds * fps)
+    kick_frames = int(kick_window_seconds * fps)
 
-    def valid_before(idx):
-        """Letzter Frame <= idx mit gültiger Ballposition."""
-        for i in range(idx, -1, -1):
-            if math.isfinite(ball_x[i]) and math.isfinite(ball_y[i]):
-                return i
+    passes = []
+
+    def nearest_valid_before(idx):
+        for j in range(idx, -1, -1):
+            if np.isfinite(x_smooth[j]) and np.isfinite(y_smooth[j]):
+                return j
         return None
 
-    def valid_after(idx):
-        """Erster Frame >= idx mit gültiger Ballposition."""
-        for i in range(idx, n):
-            if math.isfinite(ball_x[i]) and math.isfinite(ball_y[i]):
-                return i
+    def nearest_valid_after(idx):
+        for j in range(idx, n):
+            if np.isfinite(x_smooth[j]) and np.isfinite(y_smooth[j]):
+                return j
         return None
 
-    # --- 2) Von jedem Ballbesitz-Segment A zum nächsten sinnvollen Segment B ---
-    for si, (own, team, start_i, end_i) in enumerate(segments):
-        # Nur echte Spielerbesitze berücksichtigen
-        if own == -1 or team not in (1, 2):
+    # -----------------------------------------------------
+    # 4) Segmente A → B analysieren
+    # -----------------------------------------------------
+    for si, (ownA, teamA, startA, endA) in enumerate(segments):
+
+        if ownA == -1 or teamA not in (1, 2):
             continue
 
-        seg_len = end_i - start_i + 1
-        if seg_len < min_possession_frames_eff:
-            # zu kurze Ballkontrolle -> z.B. Zweikampf-Pingpong
-            continue
+        if (endA - startA + 1) < min_len:
+            continue  # Ballbesitz zu kurz → Dribbling / Zweikampf
 
-        # Nächstes Segment B suchen
-        candidate_j = None
+        # Nächstes sinnvolles B-Segment
+        target = None
         for sj in range(si + 1, len(segments)):
-            own2, team2, start_j, end_j = segments[sj]
+            ownB, teamB, startB, endB = segments[sj]
 
-            # zeitliche Lücke zu groß -> keine Verbindung mehr
-            if start_j - end_i > max_gap_frames:
+            if startB - endA > max_gap_frames:
                 break
 
-            # Segmente ohne Besitzer oder ohne Team ignorieren
-            if own2 == -1 or team2 not in (1, 2):
+            if ownB == -1 or teamB not in (1, 2):
                 continue
 
-            # Self-Pass (A -> A) ignorieren
-            if own2 == own:
-                continue
+            if ownB == ownA:
+                continue  # self-pass ignoriere
 
-            candidate_j = sj
+            target = (ownB, teamB, startB, endB)
             break
 
-        if candidate_j is None:
+        if target is None:
             continue
 
-        own2, team2, start_j, end_j = segments[candidate_j]
+        ownB, teamB, startB, endB = target
 
-        # --- Geschwindigkeitskriterium: es muss einen "Kick" dazwischen geben ---
-        # --- Geschwindigkeitskriterium: es muss einen "Kick" dazwischen geben ---
-        t0, t1 = end_i, start_j
-        if t1 <= t0:
+        # -------------------------------------------------
+        # 5) Kick-Detektion (A-Ende → Anfang B)
+        # -------------------------------------------------
+        t0 = endA
+        t_end = min(endA + kick_frames, startB)
+
+        kick_window = speed[t0:t_end+1]
+        if np.nanmax(kick_window) < speed_threshold:
+            continue  # kein Kick → kein Pass
+
+        # -------------------------------------------------
+        # 6) Start-/Endposition bestimmen
+        # -------------------------------------------------
+        s_idx = nearest_valid_before(endA)
+        e_idx = nearest_valid_after(startB)
+
+        if s_idx is None or e_idx is None:
             continue
 
-        # fps-stabiles Zeitfenster für Kick-Detektion (z. B. 0.20 Sekunden)
-        kick_window_seconds = 0.20
-        kick_window_frames = int(round(kick_window_seconds * fps))
+        sx, sy = x_smooth[s_idx], y_smooth[s_idx]
+        ex, ey = x_smooth[e_idx], y_smooth[e_idx]
 
-        # Bereich begrenzen: nur t0 .. t0+kick_window_frames prüfen (oder bis t1)
-        t_end = min(t1, t0 + kick_window_frames)
-
-        window_speeds = speed[t0 : t_end + 1]
-        finite_mask = np.isfinite(window_speeds)
-        if not finite_mask.any():
-            continue
-
-        # Kick dann vorhanden, wenn mind. ein Frame über Schwellwert liegt
-        if not (window_speeds[finite_mask] >= speed_threshold).any():
-            continue
-
-        # --- Start-/Endposition anhand der Ballposition bestimmen ---
-        start_idx = valid_before(end_i)
-        end_idx = valid_after(start_j)
-
-        if start_idx is None or end_idx is None:
-            continue
-
-        sx, sy = ball_x[start_idx], ball_y[start_idx]
-        ex, ey = ball_x[end_idx], ball_y[end_idx]
-
-        if not (
-            math.isfinite(sx)
-            and math.isfinite(sy)
-            and math.isfinite(ex)
-            and math.isfinite(ey)
-        ):
+        if not np.isfinite(sx) or not np.isfinite(ex):
             continue
 
         dist = math.hypot(ex - sx, ey - sy)
         if dist < min_distance:
-            # zu kurzer Weg -> eher kurzer Kontakt/Dribbling
-            continue
+            continue  # Dribbling / kleiner Tap / Zweikampf
 
-        completed = (team2 == team)
+        completed = (teamA == teamB)
 
-        passes.append(
-            {
-                "team": int(team),   # Team des Passgebers
-                "start_x": float(sx),
-                "start_y": float(sy),
-                "end_x": float(ex),
-                "end_y": float(ey),
-                "completed": bool(completed),
-            }
-        )
+        passes.append({
+            "team": int(teamA),
+            "start_x": float(sx),
+            "start_y": float(sy),
+            "end_x": float(ex),
+            "end_y": float(ey),
+            "completed": bool(completed),
+        })
 
     print(f"[pass_maps] detect_passes: {len(passes)} Pässe erkannt.")
     return passes
@@ -300,7 +282,7 @@ def create_pass_maps_from_csv(
         fps=fps,
         speed_threshold=speed_threshold,
         min_distance=min_distance,
-        min_flight_frames=analytics_cfg.pass_min_frames
+        min_possession_frames=analytics_cfg.pass_min_frames
     )
 
     _plot_pass_map(

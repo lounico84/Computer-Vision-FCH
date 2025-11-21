@@ -1,51 +1,68 @@
-from utils import get_center_of_bbox, measure_distance
+from utils import pixel_to_pitch
 
-class PlayerBallAssigner():
+class PlayerBallAssigner:
     def __init__(self):
-        # Maximum distance in pixels at wich a player can still be considered a valid candidate for owning the ball
-        self.max_player_ball_distance = 70
+        # Schwellenwerte in Metern (nach Homographie!)
+        self.max_owner_distance_m = 1.4        # < 1.4m → direkter Kontakt
+        self.min_margin_distance_m = 0.5       # zweitbester Spieler mind. 0.5m weiter weg
 
-        # Rule the closest player must be clearly better compared to the second closest candidate
-        self.min_margin_ratio = 0.7 
-    
-    # Assign the ball to the closest player or goalkeeper
+    def _foot_point_meters(self, bbox):
+        """
+        Nutzt den Fußpunkt (x_center, y_bottom) und transformiert in Meter.
+        """
+        x1, y1, x2, y2 = bbox
+        foot_x = (x1 + x2) / 2
+        foot_y = y2
+        return pixel_to_pitch(foot_x, foot_y)
+
+    def _ball_center_meters(self, bbox):
+        """
+        Zentrum des Balles in Meter-Koordinaten.
+        """
+        x1, y1, x2, y2 = bbox
+        cx = (x1 + x2) / 2
+        cy = (y1 + y2) / 2
+        return pixel_to_pitch(cx, cy)
+
     def assign_ball_to_player(self, players, ball_bbox):
+        """
+        Bestimmt den Spieler, der dem Ball am nächsten ist – jetzt in Meter!
 
-        # Compute the (x,y) center position of the ball
-        ball_position = get_center_of_bbox(ball_bbox)
+        players: dict {track_id: {"bbox": [...]}}
+        ball_bbox: [x1, y1, x2, y2]
+        """
+        # Ballposition in Meter
+        bx, by = self._ball_center_meters(ball_bbox)
 
         best_id = -1
-        best_dist = 99999 # current smallest distance
-        second_best_dist = 99999 # second smallest distance
+        best_dist = 9999.0
+        second_best_dist = 9999.0
 
-        # Loop through all players and goalkeepers
-        for player_id, player in players.items():
-            player_bbox = player['bbox']
+        for pid, pdata in players.items():
+            px, py = self._foot_point_meters(pdata["bbox"])
 
-            # Compute distances from both left and right foot positions to the ball
-            # Using min distance increases robustness to slight bbox noise
-            distance_left = measure_distance((player_bbox[0], player_bbox[-1]), ball_position)
-            distance_right = measure_distance((player_bbox[2], player_bbox[-1]), ball_position)
-            distance = min(distance_left, distance_right)
+            # Distanz in Metern
+            dist = ((px - bx) ** 2 + (py - by) ** 2) ** 0.5
 
-            # Update best and second best distances
-            if distance < best_dist:
+            # Update Ranking
+            if dist < best_dist:
                 second_best_dist = best_dist
-                best_dist = distance
-                best_id = player_id
-            elif distance < second_best_dist:
-                second_best_dist = distance
+                best_dist = dist
+                best_id = pid
+            elif dist < second_best_dist:
+                second_best_dist = dist
 
-        # No valid candidate if the closest plaxer is still to far away
-        if best_dist > self.max_player_ball_distance:
+        # Falls niemand nahe genug → kein Besitzer
+        if best_dist > self.max_owner_distance_m:
             return -1
 
-        # If only one player was close enough
-        if second_best_dist == 99999:
+        # Falls nur ein Spieler überhaupt realistisch nahe war
+        if second_best_dist == 9999:
             return best_id
 
-        # Rule: the best distance must be clearly better than the second best tp avoid false assignments when multiple plaxers are equally close
-        if best_dist < self.min_margin_ratio * second_best_dist:
+        # Abstand muss deutlich besser sein als der zweitbeste
+        if second_best_dist - best_dist >= self.min_margin_distance_m:
             return best_id
-        else:
-            return -1
+
+        # Wenn beide zu nah beieinander → unsicher
+        return -1
