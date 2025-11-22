@@ -14,6 +14,7 @@ def export_analytics(tracks, team_ball_control, settings: Settings):
     )
 
     # Pass-Maps
+    '''
     create_pass_maps_from_csv(
     csv_path=str(settings.paths.frame_events_csv),
     out_path_team1=str(settings.paths.pass_map_team1),
@@ -25,3 +26,4 @@ def export_analytics(tracks, team_ball_control, settings: Settings):
     min_distance=analytics_cfg.pass_min_distance,
     pitch_image_path=str(settings.paths.pitch_image),
     )
+    '''

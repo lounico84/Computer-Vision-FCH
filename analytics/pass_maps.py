@@ -222,7 +222,7 @@ def classify_pass_types(
 
     return passes
 
-def _plot_pass_map(
+def plot_pass_map(
     passes,
     team,
     pitch_length,
@@ -297,9 +297,13 @@ def _plot_pass_map(
     ax.set_xlabel("Länge [m]")
     ax.set_ylabel("Breite [m]")
     plt.tight_layout()
-    fig.savefig(out_path, dpi=200)
-    plt.close(fig)
-    print(f"Pass-Map für Team {team} gespeichert unter: {out_path}")
+    if out_path is not None:
+        fig.savefig(out_path, dpi=200)
+        print(f"Pass-Map für Team {team} gespeichert unter: {out_path}")
+        plt.close(fig)  # nach dem Speichern schließen
+    else:
+        # im Notebook anzeigen, nicht schließen
+        plt.show()
 
 
 def create_pass_maps_from_csv(
@@ -347,13 +351,14 @@ def create_pass_maps_from_csv(
     num_clear = sum(1 for p in passes if p.get("type") == "clearance")
     num_completed = sum(1 for p in passes if p.get("type") == "completed_pass")
     num_failed = sum(1 for p in passes if p.get("type") == "failed_pass")
-
+    
     print(
         f"[pass_maps] Summary: total={num_total}, "
         f"completed={num_completed}, failed={num_failed}, clearances={num_clear}"
     )
 
-    _plot_pass_map(
+    # Team 1
+    plot_pass_map(
         passes,
         team=1,
         pitch_length=pitch_length,
@@ -361,7 +366,9 @@ def create_pass_maps_from_csv(
         out_path=out_path_team1,
         pitch_image_path=pitch_image_path,
     )
-    _plot_pass_map(
+
+    # Team 2
+    plot_pass_map(
         passes,
         team=2,
         pitch_length=pitch_length,
