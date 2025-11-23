@@ -10,20 +10,20 @@ class PathConfig:
     model_path: Path = "yolo_training/models/fifth_model/run1/weights/best.pt"
 
     # Videos
-    input_video: Path = "input_videos_match/Test/kuesnacht_test_clip4.MP4"
+    input_video: Path = "input_videos_match/Test/kuesnacht_test_clip5.MP4"
 
     # Output
-    output_video: Path = "output_video_match/output_video_k_4_30.avi"
-    color_debug_image: Path = "output_video_match/color_debug_4_30.png"
+    output_video: Path = "output_video_match/output_video_k_5.avi"
+    color_debug_image: Path = "output_video_match/color_debug_5.png"
 
     # Stubs
-    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_4_30.pkl"
-    team_stub: Path = PROJECT_ROOT / "stubs/team_stubs_k_4_30.pkl"
+    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_5.pkl"
+    team_stub: Path = PROJECT_ROOT / "stubs/team_stubs_k_5.pkl"
 
     # Analytics
-    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events/frame_events_4_30.csv"
-    pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1_4_32.png"
-    pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2_4_32.png"
+    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events/frame_events_5.csv"
+    pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1_5.png"
+    pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2_5.png"
 
     # Calibration
     pitch_image: Path = PROJECT_ROOT / "calibration/pictures/fch_fussballfeld.jpg"

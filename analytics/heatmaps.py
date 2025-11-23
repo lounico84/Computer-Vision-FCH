@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple
-
+import cv2
 
 def compute_ball_heatmap(
     df,
@@ -31,29 +31,58 @@ def plot_ball_heatmap_on_pitch(
     pitch_img,
     pitch_length: float,
     pitch_width: float,
-    bins: Tuple[int, int] = (40, 24),
+    bins: Tuple[int, int] = (120, 72),
     ax: plt.Axes | None = None,
-    cmap: str = "hot",
-    alpha: float = 0.6,
+    cmap: str = "jet",
 ):
-    """
-    Zeichnet den Ball-Heatmap-Layer auf dein Pitch-Bild.
-    """
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Hintergrund
-    ax.imshow(pitch_img, extent=[0, pitch_length, 0, pitch_width], aspect="equal")
-
-    H, xedges, yedges = compute_ball_heatmap(df, pitch_length, pitch_width, bins=bins)
-
+    # Hintergrund: sehr leicht sichtbar
     ax.imshow(
-        H.T,
+        pitch_img,
+        extent=[0, pitch_length, 0, pitch_width],
+        aspect="equal",
+        alpha=0.35,     # <--- reduziert Feld-Dominanz
+    )
+
+    # Ballpositionen
+    mask = df["ball_x_m"].notna() & df["ball_y_m"].notna()
+    x = df.loc[mask, "ball_x_m"].to_numpy()
+    y = df.loc[mask, "ball_y_m"].to_numpy()
+
+    # Histogramm mit hoher Auflösung
+    H, xedges, yedges = np.histogram2d(
+        x, y,
+        bins=bins,
+        range=[[0, pitch_length], [0, pitch_width]],
+    )
+
+    H = H.astype(np.float32)
+
+    # Gaussian Blur = weich/rund
+    H_blur = cv2.GaussianBlur(H, (0, 0), sigmaX=3.5, sigmaY=3.5)
+
+    # Perzentil-Normalisierung (viel besser als max-Norm)
+    hi = np.nanpercentile(H_blur, 98)
+    if hi > 0:
+        H_norm = np.clip(H_blur / hi, 0, 1)
+    else:
+        H_norm = H_blur
+
+    # Kleine Werte entfernen
+    H_norm[H_norm < 0.05] = 0.0
+
+    # Weiche Anzeige
+    ax.imshow(
+        H_norm.T,
         extent=[0, pitch_length, 0, pitch_width],
         origin="lower",
         cmap=cmap,
-        alpha=alpha,
-        aspect="equal",
+        interpolation="bilinear",
+        alpha=0.85,      # <--- Heatmap deutlich sichtbarer
+        vmin=0,
+        vmax=1,
     )
 
     ax.set_xlim(0, pitch_length)
@@ -70,12 +99,10 @@ def plot_team_ball_heatmaps_on_pitch(
     pitch_img,
     pitch_length: float,
     pitch_width: float,
-    bins: Tuple[int, int] = (40, 24),
+    bins: Tuple[int, int] = (90, 54),
 ):
     """
-    Zeichnet 2 Heatmaps nebeneinander:
-    - Team 1 Ballpositionen nur bei Ballkontrolle von Team 1
-    - Team 2 entsprechend
+    Glatte Heatmaps für Team 1 und Team 2 nebeneinander.
     """
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
 
@@ -88,26 +115,42 @@ def plot_team_ball_heatmaps_on_pitch(
         x = df.loc[mask, "ball_x_m"].to_numpy()
         y = df.loc[mask, "ball_y_m"].to_numpy()
 
+        # Pitch
         ax.imshow(
             pitch_img,
             extent=[0, pitch_length, 0, pitch_width],
             aspect="equal",
+            alpha=1.0,
         )
 
         if len(x) > 0:
             H, xedges, yedges = np.histogram2d(
-                x,
-                y,
+                x, y,
                 bins=bins,
                 range=[[0, pitch_length], [0, pitch_width]],
             )
+
+            H = H.astype(np.float32)
+            H_blur = cv2.GaussianBlur(H, ksize=(0, 0), sigmaX=2.0, sigmaY=2.0)
+
+            max_val = np.max(H_blur)
+            if max_val > 0:
+                H_norm = H_blur / max_val
+            else:
+                H_norm = H_blur
+
+            H_norm[H_norm < 0.02] = 0.0
+
             ax.imshow(
-                H.T,
+                H_norm.T,
                 extent=[0, pitch_length, 0, pitch_width],
                 origin="lower",
-                cmap="hot",
-                alpha=0.6,
+                cmap="jet",
+                alpha=0.65,
                 aspect="equal",
+                vmin=0,
+                vmax=1,
+                interpolation="bilinear",
             )
 
         ax.set_xlim(0, pitch_length)

@@ -19,6 +19,7 @@ class FieldMapper:
         if self.pitch_img is None:
             raise FileNotFoundError("pitch_map.png nicht gefunden")
         self.h, self.w = self.pitch_img.shape[:2]
+        # self.w / self.h werden für Bounds-Checks der projizierten Pitch-Pixel verwendet
 
     def cam_to_pitch_px(self, x, y):
         """Kamera-Pixel -> Pitch-Pixel (im pitch_map.png)."""
@@ -30,8 +31,14 @@ class FieldMapper:
 
     def pitch_px_to_m(self, X, Y):
         """Pitch-Pixel -> Meterkoordinaten (0..100m, 0..60m)."""
+        # Vorwärtsprojektion kann Punkte außerhalb des Pitch-Images liefern
+        if not (0.0 <= X <= self.w and 0.0 <= Y <= self.h):
+            return np.nan, np.nan
         mx = X / self.w * FIELD_LENGTH_M
         my = Y / self.h * FIELD_WIDTH_M
+        # Sicherheit: Meterkoordinaten ausserhalb des realen Feldes verwerfen
+        if not (0.0 <= mx <= FIELD_LENGTH_M and 0.0 <= my <= FIELD_WIDTH_M):
+            return np.nan, np.nan
         return mx, my
 
     def cam_to_meters(self, x, y):
