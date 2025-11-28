@@ -29,14 +29,7 @@ def run_match_analysis(settings: Settings | None = None):
 
     print("[STEP 4] - drawing anntoations...")
     # Annotiertes Video direkt streamend schreiben
-    tracker.draw_annotations_to_video(
-        str(paths.input_video),
-        tracks,
-        team_ball_control,
-        output_path=str(paths.output_video),
-        fps=tracking.fps,
-        frame_skip=tracking.frame_skip
-    )
+    tracker.draw_annotations_to_video(str(paths.input_video), tracks, team_ball_control, output_path=str(paths.output_video), fps=tracking.fps, frame_skip=tracking.frame_skip, settings=settings)
 
     print("\n[STEP 5] - exporting analytics...")
     # Export analytics

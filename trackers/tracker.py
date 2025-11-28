@@ -8,7 +8,7 @@ import os
 import torch
 from tqdm import tqdm
 from math import ceil
-from utils import get_bbox_width, get_center_of_bbox, get_bbox_height
+from utils import get_bbox_width, get_center_of_bbox, get_bbox_height, pixel_to_pitch, is_homography_available
 
 class Tracker:
     def __init__(self, model_path):
@@ -592,12 +592,15 @@ class Tracker:
 
         return tracks
     
-    def draw_annotations_to_video(self, input_video_path, tracks, team_ball_control, output_path, fps=30, frame_skip: int = 1):
+    def draw_annotations_to_video(self, input_video_path, tracks, team_ball_control, output_path, fps=30, frame_skip: int = 1, settings=None):
         """
         Liest das Input-Video frame-weise,
         zeichnet die Overlays und schreibt direkt in eine Ausgabedatei.
         Kein Sammeln aller Frames im RAM.
         """
+        if settings is None:
+            from config import Settings
+            settings = Settings()
 
         cap = cv2.VideoCapture(input_video_path)
         if not cap.isOpened():
@@ -681,6 +684,7 @@ class Tracker:
 
             # Draw Team Ball Control
             frame_copy = self.draw_team_ball_control(frame_copy, frame_num, team_ball_control)
+            frame_copy = self.draw_live_map(frame_copy, tracks, frame_num, settings)
 
             out.write(frame_copy)
             frame_num += 1
@@ -694,3 +698,223 @@ class Tracker:
         cap.release()
         out.release()
         print(f"Saved annotated video to {output_path}")
+
+    def draw_live_map(self, frame, tracks, frame_idx, settings, alpha_smooth: float = 0.6):
+        """
+        Zeichnet eine Mini-Pitch-Map unten ins Frame:
+        - Spieler: Team 1 (rot), Team 2 (blau)
+        - Torhüter: gelb/cyan
+        - Schiedsrichter: schwarz
+        - Ball: grün
+
+        Positionen wie in aio_click_player_to_pitch.py:
+        Kamera-Pixel -> H (aio_homography_cam_to_map.npy) -> Pitch-Pixel -> skaliert auf Mini-Map.
+        """
+
+        # Safety: Index prüfen
+        if frame_idx >= len(tracks["players"]):
+            return frame
+
+        # ---------- Lazy Init: nur beim ersten Aufruf laden ----------
+        if not hasattr(self, "_live_map_initialized"):
+            self._live_map_initialized = False
+
+            # Pitch-Bild in Originalgröße laden
+            pitch_full = cv2.imread(str(settings.paths.pitch_image))
+            if pitch_full is None:
+                print("[live_map] Pitch image not found:", settings.paths.pitch_image)
+                return frame
+
+            # Homographie in Pitch-Pixel (wie im aio-Tool)
+            try:
+                H_px = np.load(str(settings.paths.homography_npy))
+            except Exception as e:
+                print("[live_map] Could not load homography npy:", e)
+                return frame
+
+            # Kamera-Kalibrierung laden (K, dist), wie in aio_full_calibration_field / aio_click_player_to_pitch
+            try:
+                calib = np.load(str(settings.paths.calib_file))
+                K = calib["K"]
+                dist = calib["dist"]
+            except Exception as e:
+                print("[live_map] Could not load calib file:", e)
+                return frame
+
+            full_h, full_w = pitch_full.shape[:2]
+
+            # Zielgröße für Mini-Map
+            map_w, map_h = 350, 210
+            pitch_resized = cv2.resize(pitch_full, (map_w, map_h))
+
+            # Alles im Objekt cachen
+            self._live_map_H_px = H_px
+            self._live_map_K = K
+            self._live_map_dist = dist
+            self._live_map_full_size = (full_w, full_h)
+            self._live_map_img_base = pitch_resized
+            self._live_map_size = (map_w, map_h)
+            self._live_map_history = {
+                "players": {},   # track_id -> np.array([x,y])
+                "gks": {},
+                "refs": {},
+                "ball": None,
+            }
+            self._live_map_initialized = True
+
+            # Zielgröße für Mini-Map
+            map_w, map_h = 350, 210
+            pitch_resized = cv2.resize(pitch_full, (map_w, map_h))
+
+            # Alles im Objekt cachen
+            self._live_map_H_px = H_px
+            self._live_map_full_size = (full_w, full_h)
+            self._live_map_img_base = pitch_resized
+            self._live_map_size = (map_w, map_h)
+            self._live_map_history = {
+                "players": {},   # track_id -> np.array([x,y])
+                "gks": {},
+                "refs": {},
+                "ball": None,
+            }
+            self._live_map_initialized = True
+
+        if not self._live_map_initialized:
+            return frame
+
+        H_px = self._live_map_H_px
+        full_w, full_h = self._live_map_full_size
+        map_w, map_h = self._live_map_size
+
+        # Frisches Overlay für diesen Frame
+        map_overlay = self._live_map_img_base.copy()
+
+        # ---------- Helper: Kamera-Pixel -> Mini-Map-Pixel ----------
+        def cam_to_map_px(x, y):
+            # 1) Punkt aus verzerrtem Video in undistorted-Koordinate bringen
+            pts = np.array([[[float(x), float(y)]]], dtype=np.float32)
+
+            # undistortPoints gibt normalisierte Koords (u,v) zurück
+            undist_norm = cv2.undistortPoints(pts, self._live_map_K, self._live_map_dist)
+            u, v = undist_norm[0, 0]
+
+            # wieder in Pixelkoordinate im undistorted-Bild zurückrechnen
+            x_u = self._live_map_K[0, 0] * u + self._live_map_K[0, 2]
+            y_u = self._live_map_K[1, 1] * v + self._live_map_K[1, 2]
+
+            pts_u = np.array([[[x_u, y_u]]], dtype=np.float32)
+
+            # 2) Homographie auf UNDISTORTED-Pixel anwenden (wie im aio-Tool)
+            dst = cv2.perspectiveTransform(pts_u, H_px)
+            X = dst[0, 0, 0]
+            Y = dst[0, 0, 1]
+
+            # außerhalb des Pitch-Bildes? dann ignorieren
+            if X < 0 or X >= full_w or Y < 0 or Y >= full_h:
+                return None
+
+            # 3) Pitch-Pixel -> Mini-Map-Pixel
+            mx = int(X / full_w * map_w)
+            my = int(Y / full_h * map_h)
+            return mx, my
+
+        def smooth(key, pos, store_dict):
+            """Einfache Exponential-Glättung pro track_id."""
+            if pos is None:
+                return None
+
+            new = np.array(pos, dtype=np.float32)
+            if key in store_dict:
+                old = store_dict[key]
+                sm = alpha_smooth * new + (1.0 - alpha_smooth) * old
+            else:
+                sm = new
+            store_dict[key] = sm
+            return int(sm[0]), int(sm[1])
+
+        hist = self._live_map_history
+
+        # ---------- Spieler (Trikotfarben) ----------
+        players = tracks["players"][frame_idx]
+        for pid, p in players.items():
+            # Fußpunkt des Spielers (wie beim Klicken auf die Füße)
+            x1, y1, x2, y2 = p["bbox"]
+            foot_x = 0.5 * (x1 + x2)
+            foot_y = y2
+
+            pos = cam_to_map_px(foot_x, foot_y)
+            pos = smooth(pid, pos, hist["players"])
+            if pos is None:
+                continue
+            mx, my = pos
+
+            raw_color = p.get("team_color")
+            if raw_color is None:
+                color = (180, 180, 180)  # Fallback
+            else:
+                # team_color kommt schon als BGR-Tuple/-Array aus der TeamAssigner-Logik
+                color = tuple(int(c) for c in np.asarray(raw_color).tolist())
+
+            cv2.circle(map_overlay, (mx, my), 5, color, -1)
+
+        # ---------- Torhüter ----------
+        gks = tracks["goalkeepers"][frame_idx]
+        for gid, g in gks.items():
+            x1, y1, x2, y2 = g["bbox"]
+            foot_x = 0.5 * (x1 + x2)
+            foot_y = y2
+
+            pos = cam_to_map_px(foot_x, foot_y)
+            pos = smooth(gid, pos, hist["gks"])
+            if pos is None:
+                continue
+            mx, my = pos
+
+            color = (0, 0, 255)  # Blue
+            cv2.circle(map_overlay, (mx, my), 7, color, -1)
+
+        # ---------- Schiedsrichter ----------
+        refs = tracks["referees"][frame_idx]
+        for rid, r in refs.items():
+            x1, y1, x2, y2 = r["bbox"]
+            foot_x = 0.5 * (x1 + x2)
+            foot_y = y2
+
+            pos = cam_to_map_px(foot_x, foot_y)
+            pos = smooth(rid, pos, hist["refs"])
+            if pos is None:
+                continue
+            mx, my = pos
+
+            # schwarzer Punkt
+            cv2.circle(map_overlay, (mx, my), 5, (0, 0, 0), -1)
+
+        # ---------- Ball ----------
+        ball_dict = tracks["ball"][frame_idx]
+        if 1 in ball_dict:
+            x1, y1, x2, y2 = ball_dict[1]["bbox"]
+            cx = 0.5 * (x1 + x2)
+            cy = 0.5 * (y1 + y2)
+
+            pos = cam_to_map_px(cx, cy)
+            # Ball speichern als single-Vector in history["ball"]
+            if pos is not None:
+                if hist["ball"] is None:
+                    hist["ball"] = np.array(pos, dtype=np.float32)
+                else:
+                    new = np.array(pos, dtype=np.float32)
+                    hist["ball"] = alpha_smooth * new + (1.0 - alpha_smooth) * hist["ball"]
+                bx, by = int(hist["ball"][0]), int(hist["ball"][1])
+                cv2.circle(map_overlay, (bx, by), 6, (0, 255, 0), -1)  # Grün
+
+        # ---------- Mini-Map unten ins Frame zeichnen ----------
+        h, w = frame.shape[:2]
+        x0 = 30
+        y0 = h - map_h - 30
+        if y0 < 0:
+            y0 = 10
+        if x0 + map_w > w:
+            x0 = max(0, w - map_w - 10)
+
+        frame[y0:y0 + map_h, x0:x0 + map_w] = map_overlay
+        return frame

@@ -1,7 +1,29 @@
+import sys
+import os
 import cv2
 import numpy as np
-from config import Settings
+import importlib.util
+from pathlib import Path
+
+# === 0. Repo-Root & config.py robust laden ===
+THIS_FILE = Path(__file__).resolve()
+REPO_ROOT = THIS_FILE.parents[3]
+
+CONFIG_PATH = REPO_ROOT / "project/Computer-Vision-FCH/config.py"
+if not CONFIG_PATH.exists():
+    raise FileNotFoundError(f"config.py nicht gefunden unter: {CONFIG_PATH}")
+
+# config.py explizit laden, unabhängig vom Working Directory
+spec = importlib.util.spec_from_file_location("config", str(CONFIG_PATH))
+config = importlib.util.module_from_spec(spec)
+sys.modules["config"] = config
+spec.loader.exec_module(config)
+
+Settings = config.Settings
 s = Settings()
+
+print("[DEBUG] REPO_ROOT:", REPO_ROOT)
+print("[DEBUG] config.py geladen von:", CONFIG_PATH)
 
 # ==== Pfade anpassen ====
 VIDEO_FILE   = str(s.paths.input_video)
