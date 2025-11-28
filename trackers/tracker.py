@@ -9,6 +9,10 @@ import torch
 from tqdm import tqdm
 from math import ceil
 from utils import get_bbox_width, get_center_of_bbox, get_bbox_height, pixel_to_pitch, is_homography_available
+from config import Settings
+
+settings = Settings()
+analytics_cfg = settings.analytics
 
 class Tracker:
     def __init__(self, model_path):
@@ -145,13 +149,46 @@ class Tracker:
                     if cls_id == cls_names_inv['goalkeeper']:
                         tracks["goalkeepers"][frame_num][track_id] = {"bbox":bbox}
 
-                # Add ball detections (always ID=1)
+                # Ball (immer ID=1): beste gültige Detection im Feld wählen innerhalb der homographie
+                ball_candidates = []
+
                 for frame_detection in detection_supervision:
                     bbox = frame_detection[0]
+                    conf = frame_detection[2]   # confidence
                     cls_id = frame_detection[3]
 
-                    if cls_id == cls_names_inv['ball']:
-                        tracks["ball"][frame_num][1] = {"bbox":bbox}
+                    if cls_id != ball_class_id:
+                        continue
+
+                    ball_candidates.append((conf, bbox))
+
+                # Nach Konfidenz sortieren (höchste zuerst)
+                ball_candidates.sort(key=lambda x: x[0], reverse=True)
+
+                for conf, bbox in ball_candidates:
+                    x1, y1, x2, y2 = bbox
+                    cx = 0.5 * (x1 + x2)
+                    cy = 0.5 * (y1 + y2)
+
+                    # Kamera-Pixel -> Meter (Homographie)
+                    X, Y = pixel_to_pitch(cx, cy)
+                    if not np.isfinite(X) or not np.isfinite(Y):
+                        continue
+
+                    margin = analytics_cfg.pitch_margin
+                    L = analytics_cfg.pitch_length
+                    W = analytics_cfg.pitch_width
+
+                    # Nur Bälle innerhalb des Spielfelds +/- Margin
+                    if (
+                        X < -margin or X > L + margin or
+                        Y < -margin or Y > W + margin
+                    ):
+                        continue
+
+                    # Erste gültige, im Feld liegende Detection -> als Ball übernehmen
+                    tracks["ball"][frame_num][1] = {"bbox": bbox}
+                    break  # keine weiteren prüfen
         
         # NEW: stabilize roles per track_id across the whole video
         tracks = self._stabilize_roles_per_track(
