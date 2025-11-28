@@ -1,8 +1,17 @@
 import math
 import cv2
 import numpy as np
+import sys
+import pathlib as Path
+PROJECT_ROOT = next(
+    p for p in Path.cwd().parents
+    if (p / "project/Computer-Vision-FCH").exists()
+)
+print("PROJECT_ROOT:", PROJECT_ROOT)
 from config import Settings
 s = Settings()
+
+config_path = PROJECT_ROOT / "config.py"
 
 # ===========================================
 #  Pfade anpassen

@@ -13,6 +13,7 @@ from config import Settings
 
 settings = Settings()
 analytics_cfg = settings.analytics
+team_cfg = settings.team_names
 
 class Tracker:
     def __init__(self, model_path):
@@ -293,51 +294,214 @@ class Tracker:
         return frame
 
     # Draw a small overlay for ball position
-    def draw_team_ball_control(self, frame, frame_num, team_ball_control):
-        # Draw a semi-transparent rectangle
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (1350, 850), (1900, 970), (255, 255, 255), -1)
-        alpha = 0.4
-        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+    def draw_team_ball_control(self, frame, frame_num, team_ball_control, fps=None):
+        """
+        Unten rechts im Champions-League-Stil:
+        - links: kleine Clock-Box (weiß)
+        - rechts daneben: Scorebar (dunkel, Teamabbr. + Score)
+        - darunter: flacher Ballbesitz-Balken in Teamfarben
+        """
+        if fps is None:
+            fps = 30
 
-        # Use data from frame 0 up to and including the current frame
-        team_ball_control_till_frame = team_ball_control[:frame_num + 1]
+        h, w = frame.shape[:2]
 
-        # Only consider frames where Team 1 or Team 2 actually had possession
-        # (0 or other values mean: no clear control)
-        mask_1 = (team_ball_control_till_frame == 1)
-        mask_2 = (team_ball_control_till_frame == 2)
+        # ----------------------------- #
+        # 1) Ballbesitz berechnen
+        # ----------------------------- #
+        tbc_slice = team_ball_control[:frame_num + 1]
+        if isinstance(tbc_slice, list):
+            tbc_slice = np.array(tbc_slice)
 
-        team_1_num_frames = mask_1.sum()
-        team_2_num_frames = mask_2.sum()
-        denom = team_1_num_frames + team_2_num_frames
+        t1_frames = np.sum(tbc_slice == 1)
+        t2_frames = np.sum(tbc_slice == 2)
+        total = t1_frames + t2_frames
 
-        if denom == 0:
-             # Start with no ball control
-            team_1 = 0.0
-            team_2 = 0.0
+        if total == 0:
+            pct1 = pct2 = 0.0
         else:
-            team_1 = team_1_num_frames / denom
-            team_2 = team_2_num_frames / denom
+            pct1 = t1_frames / total
+            pct2 = t2_frames / total
+
+        # ----------------------------- #
+        # 2) Teamfarben aus aktuellen Spielern
+        # ----------------------------- #
+        color1 = (0, 150, 255)   # Fallback Team 1
+        color2 = (255, 60, 60)   # Fallback Team 2
+
+        players = getattr(self, "current_players", None)
+        if players is not None:
+            for _, p in players.items():
+                raw = p.get("team_color")
+                tid = p.get("team")
+                if raw is None or tid not in (1, 2):
+                    continue
+                col = tuple(int(x) for x in np.asarray(raw).tolist())
+                if tid == 1:
+                    color1 = col
+                elif tid == 2:
+                    color2 = col
+
+        # ----------------------------- #
+        # 3) Teamnamen / Abkürzungen
+        # ----------------------------- #
+        team1_name = settings.team_names.team1_name
+        team2_name = settings.team_names.team2_name
+
+        # Abkürzungen wie bei CL (3 Buchstaben)
+        abbr1 = team1_name[:3].upper()
+        abbr2 = team2_name[:3].upper()
+
+        # ----------------------------- #
+        # 4) Layoutparameter (unten rechts)
+        # ----------------------------- #
+        MARGIN = 40
+        CLOCK_W = 90
+        SCORE_W = 260
+        SCORE_H = 40
+        GAP = 6
+
+        POSBAR_H = 32
+        POSBAR_GAP = 6
+
+        total_width = CLOCK_W + GAP + SCORE_W
+
+        # Oben links:
+        x1 = MARGIN
+        x2 = x1 + total_width
+
+        score_y1 = MARGIN
+        score_y2 = score_y1 + SCORE_H
+
+        pos_y1 = score_y2 + POSBAR_GAP
+        pos_y2 = pos_y1 + POSBAR_H
+
+        # ----------------------------- #
+        # 5) Clock-Box (links, weiß)
+        # ----------------------------- #
+        # Zeit in mm:ss
+        time_sec = frame_num / float(fps)
+        minutes = int(time_sec // 60)
+        seconds = int(time_sec % 60)
+        time_str = f"{minutes:02d}:{seconds:02d}"
+
+        clock_x1 = x1
+        clock_x2 = x1 + CLOCK_W
+
+        cv2.rectangle(frame, (clock_x1, score_y1), (clock_x2, score_y2), (245, 245, 245), -1)
+        cv2.rectangle(frame, (clock_x1, score_y1), (clock_x2, score_y2), (200, 200, 200), 1)
 
         cv2.putText(
-            frame,
-            f"Team 1 Ball Control: {team_1 * 100:.2f}%",
-            (1400, 900),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (0, 0, 0, 0),
-            3
+            frame, time_str,
+            (clock_x1 + 8, score_y1 + SCORE_H // 2 + 8),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (20, 20, 20), 2, cv2.LINE_AA
         )
 
-        cv2.putText(
+        # ----------------------------- #
+        # 6) Scorebar (rechts daneben)
+        #    dunkler Balken, CL-Style
+        # ----------------------------- #
+        score_x1 = clock_x2 + GAP
+        score_x2 = x2
+
+        # Hintergrund: dunkles Blau/Grau
+        cv2.rectangle(frame, (score_x1, score_y1), (score_x2, score_y2), (255,0,0), -1)
+
+        # leicht hellere Linie oben/unten (Mini-3D-Effekt)
+        cv2.line(frame, (score_x1, score_y1), (score_x2, score_y1), (80, 110, 180), 1)
+        cv2.line(frame, (score_x1, score_y2), (score_x2, score_y2), (20, 30, 70), 1)
+
+        # Abtrennungen links/rechts für Teamnamen
+        mid_y = score_y1 + SCORE_H // 2 + 8
+
+        # kleine Farbbalken neben den Teamnamen (CL-Style)
+        stripe_w = 14
+        padding = 10
+        text_offset = 14
+
+        # linker Stripe für Team 1 (Heim)
+        cv2.rectangle(
             frame,
-            f"Team 2 Ball Control: {team_2 * 100:.2f}%",
-            (1400, 950),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (0, 0, 0, 0),
-            3
+            (score_x1 + padding, score_y1 + padding),
+            (score_x1 + padding + stripe_w, score_y2 - padding),
+            color1,
+            -1
+        )
+
+        # rechter Stripe für Team 2 (Auswärts)
+        cv2.rectangle(
+            frame,
+            (score_x2 - padding - stripe_w, score_y1 + padding),
+            (score_x2 - padding, score_y2 - padding),
+            color2,
+            -1
+        )
+
+        # Team 1 links im Scoreboard (Heim)
+        cv2.putText(
+            frame, abbr1,
+            (score_x1 + padding + stripe_w + text_offset, mid_y),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA
+        )
+
+        # Team 2 rechts im Scoreboard
+        (t2w, _), _ = cv2.getTextSize(abbr2, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+        cv2.putText(
+            frame, abbr2,
+            (score_x2 - padding - stripe_w - text_offset - t2w, mid_y),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA
+        )
+
+        # Score in der Mitte (aktuell 0-0, Goal-API kommt noch)
+        goals1 = 0
+        goals2 = 0
+        score_text = f"{goals1} {goals2}"
+        (stw, sth), _ = cv2.getTextSize(score_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
+        sx = score_x1 + (SCORE_W - stw) // 2
+        sy = score_y1 + SCORE_H // 2 + sth // 3
+
+        cv2.putText(
+            frame, score_text,
+            (sx, sy),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2, cv2.LINE_AA
+        )
+
+        # kleiner Trennstrich für das mittlere "0   0"
+        center_line_x = score_x1 + SCORE_W // 2
+        cv2.line(frame, (center_line_x, score_y1 + 8), (center_line_x, score_y2 - 8), (255, 255, 255), 1)
+
+        # ----------------------------- #
+        # 7) Ballbesitz-Balken darunter
+        # ----------------------------- #
+        pos_x1 = x1
+        pos_x2 = x2
+
+        # Hintergrund neutral
+        cv2.rectangle(frame, (pos_x1, pos_y1), (pos_x2, pos_y2), (25, 25, 25), -1)
+
+        bar_width = pos_x2 - pos_x1
+        w1 = int(bar_width * pct1)
+        w2 = bar_width - w1
+
+        # linker Teil (Team 1)
+        cv2.rectangle(frame, (pos_x1, pos_y1), (pos_x1 + w1, pos_y2), color1, -1)
+        # rechter Teil (Team 2)
+        cv2.rectangle(frame, (pos_x1 + w1, pos_y1), (pos_x2, pos_y2), color2, -1)
+
+        # White Divider
+        cv2.line(frame, (pos_x1 + w1, pos_y1), (pos_x1 + w1, pos_y2), (255, 255, 255), 2)
+
+        # Prozentwerte in Weiß
+        cv2.putText(
+            frame, f"{pct1*100:.0f}%",
+            (pos_x1 + 12, pos_y2 - 8),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA
+        )
+        (p2w, _), _ = cv2.getTextSize(f"{pct2*100:.0f}%", cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+        cv2.putText(
+            frame, f"{pct2*100:.0f}%",
+            (pos_x2 - 12 - p2w, pos_y2 - 8),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA
         )
 
         return frame
@@ -670,6 +834,8 @@ class Tracker:
             frame_copy = frame.copy()
 
             player_dict = tracks["players"][frame_num] if frame_num < len(tracks["players"]) else {}
+            # store for possession bar
+            self.current_players = player_dict
             ball_dict = tracks["ball"][frame_num] if frame_num < len(tracks["ball"]) else {}
             referee_dict = tracks["referees"][frame_num] if frame_num < len(tracks["referees"]) else {}
             goalkeeper_dict = tracks["goalkeepers"][frame_num] if frame_num < len(tracks["goalkeepers"]) else {}
@@ -720,7 +886,7 @@ class Tracker:
                 # unplausible Beobachtung -> nichts zeichnen
 
             # Draw Team Ball Control
-            frame_copy = self.draw_team_ball_control(frame_copy, frame_num, team_ball_control)
+            frame_copy = self.draw_team_ball_control(frame_copy, frame_num, team_ball_control, fps=fps)
             frame_copy = self.draw_live_map(frame_copy, tracks, frame_num, settings)
 
             out.write(frame_copy)

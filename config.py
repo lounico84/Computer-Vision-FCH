@@ -13,17 +13,17 @@ class PathConfig:
     input_video: Path = "input_videos_match/Test/kuesnacht_test_clip5.MP4"
 
     # Output
-    output_video: Path = "output_video_match/output_video_k_5_test.avi"
-    color_debug_image: Path = "output_video_match/color_debug_5_test.png"
+    output_video: Path = "output_video_match/output_video_k_5_1.avi"
+    color_debug_image: Path = "output_video_match/color_debug_5_1.png"
 
     # Stubs
-    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_5_test.pkl"
-    team_stub: Path = PROJECT_ROOT / "stubs/team_stubs_k_5_test.pkl"
+    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_5_1.pkl"
+    team_stub: Path = PROJECT_ROOT / "stubs/team_stubs_k_5_1.pkl"
 
     # Analytics
-    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events/frame_events_5_test.csv"
-    pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1_5.png"
-    pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2_5.png"
+    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events/frame_events_5_1.csv"
+    pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1_5_1.png"
+    pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2_5_1.png"
 
     # Calibration
     pitch_image: Path = PROJECT_ROOT / "calibration/pictures/fch_fussballfeld.jpg"
@@ -32,14 +32,19 @@ class PathConfig:
     calib_file: Path = PROJECT_ROOT / "calibration/data/aio_gopro_calib_approx.npz"
     warped_frame_output: Path = PROJECT_ROOT / "calibration/pictures/aio_warped_frame_to_pitch.png"
 
+@dataclass
+class TeamNamesConfig:
+    team1_name: str = "FCH"
+    team2_name: str = "FCK"
+
 # Configuration for model inference and tracking behavior
 @dataclass
 class TrackingConfig:
     fps: int = 30
     read_tracks_from_stub: bool = True      # read current yolo predictions and don't predict again
     resume_track_from_stub: bool = True     # continue with frames for training
-    read_team_from_stub: bool = True       # read current k-means team assignments
-    resume_team_from_stub: bool = True      # continue with frames for training
+    read_team_from_stub: bool =  True      # read current k-means team assignments
+    resume_team_from_stub: bool = False      # continue with frames for training
     max_ball_interpolation_gap: int = 20
     frame_skip: int = 2
 
@@ -74,3 +79,4 @@ class Settings:
     referee: RefereeDecisionConfig = field(default_factory=RefereeDecisionConfig)
     ball_control: BallControlConfig = field(default_factory=BallControlConfig)
     analytics: AnalyticsConfig = field(default_factory=AnalyticsConfig)
+    team_names: TeamNamesConfig = field(default_factory=TeamNamesConfig)
