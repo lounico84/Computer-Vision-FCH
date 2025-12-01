@@ -7,6 +7,7 @@ from player_ball_assigner import PlayerBallAssigner
 def compute_team_ball_control(tracks, settings: Settings):
 
     player_assigner = PlayerBallAssigner()
+    player_assigner.auto_calibrate_from_tracks(tracks, max_frames=600)
     ball_cfg = settings.ball_control
 
     num_frames = len(tracks["players"])

@@ -22,14 +22,14 @@ class PathConfig:
 
     # Analytics
     frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events/frame_events_e.csv"
-    pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1_e.png"
-    pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2_e.png"
+    pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1.png"
+    pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2.png"
 
     # Calibration
     pitch_image: Path = PROJECT_ROOT / "calibration/pictures/fch_fussballfeld.jpg"
-    homography_npy: Path = PROJECT_ROOT / "calibration/data/aio_homography_cam_to_map_e.npy"
-    homography_npz: Path = PROJECT_ROOT / "calibration/data/homography_e.npz"
-    calib_file: Path = PROJECT_ROOT / "calibration/data/aio_gopro_calib_approx_e.npz"
+    homography_npy: Path = PROJECT_ROOT / "calibration/data/embrach/aio_homography_cam_to_map.npy"
+    homography_npz: Path = PROJECT_ROOT / "calibration/data/embrach/homography.npz"
+    calib_file: Path = PROJECT_ROOT / "calibration/data/embrach/aio_gopro_calib_approx.npz"
     warped_frame_output: Path = PROJECT_ROOT / "calibration/pictures/aio_warped_frame_to_pitch_e_1.png"
 
 @dataclass
@@ -41,8 +41,8 @@ class TeamNamesConfig:
 @dataclass
 class TrackingConfig:
     fps: int = 30
-    read_tracks_from_stub: bool = False      # read current yolo predictions and don't predict again
-    resume_track_from_stub: bool = False     # continue with frames for training
+    read_tracks_from_stub: bool = True      # read current yolo predictions and don't predict again
+    resume_track_from_stub: bool = True     # continue with frames for training
     read_team_from_stub: bool =  False    # read current k-means team assignments
     resume_team_from_stub: bool = False      # continue with frames for training
     max_ball_interpolation_gap: int = 20
