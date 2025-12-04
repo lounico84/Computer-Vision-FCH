@@ -20,13 +20,19 @@ class PlayerBallAssigner:
         cy = (y1 + y2) / 2
         return pixel_to_pitch(cx, cy)
 
-    def auto_calibrate_from_tracks(self, tracks, max_frames: int = 600):
+    def auto_calibrate_from_tracks(self, tracks, max_frames: int = 2000):
         """
         Schätzt sinnvolle Distanzen aus den ersten max_frames Frames.
         Nutzt NUR die Geometrie der aktuellen Homographie.
+
+        Idee:
+        - Alle Ball–Spieler-Minimaldistanzen sammeln.
+        - Grobe Ausreißer über robusten MAD-Filter entfernen.
+        - max_owner_distance_m als Perzentil der gefilterten Distanzen setzen,
+          aber auf einen realistischen Bereich clippen.
+        - min_margin_distance_m fix auf 0.5 lassen.
         """
         distances = []
-        diffs_best_second = []
 
         num_frames = min(max_frames, len(tracks["ball"]))
 
@@ -49,7 +55,6 @@ class PlayerBallAssigner:
                 continue
 
             best = 1e9
-            second = 1e9
 
             for pdata in players.values():
                 px, py = self._foot_point_meters(pdata["bbox"])
@@ -58,38 +63,37 @@ class PlayerBallAssigner:
 
                 d = ((px - bx) ** 2 + (py - by) ** 2) ** 0.5
                 if d < best:
-                    second = best
                     best = d
-                elif d < second:
-                    second = d
 
             if best < 1e8 and math.isfinite(best):
                 distances.append(best)
-                if second < 1e8 and math.isfinite(second):
-                    diffs_best_second.append(second - best)
 
         if len(distances) < 30:
             print("[PlayerBallAssigner] Auto-Calib: zu wenig Daten, nutze Default-Werte.")
             return
 
         distances = np.asarray(distances)
-        if diffs_best_second:
-            diffs = np.asarray(diffs_best_second)
-        else:
-            diffs = None
 
-        # Typische Spieler-Ball-Distanz ~ Median/Perzentil
-        p50 = np.percentile(distances, 50)
-        p80 = np.percentile(distances, 80)
+        # --- robuste Ausreißer-Filterung (Median + MAD) ---
+        med = np.nanmedian(distances)
+        mad = np.nanmedian(np.abs(distances - med)) + 1e-6  # Robustheit
 
-        # z.B. zwischen Median und 80%-Perzentil
-        self.max_owner_distance_m = float(p80)
+        # alles innerhalb von ±3*MAD behalten
+        good_mask = (distances > med - 3 * mad) & (distances < med + 3 * mad)
+        distances = distances[good_mask]
 
-        if diffs is not None and len(diffs) >= 10:
-            dmed = np.percentile(diffs, 50)
-            self.min_margin_distance_m = float(max(0.2, dmed))
-        else:
-            self.min_margin_distance_m = 0.4
+        if len(distances) < 30:
+            print("[PlayerBallAssigner] Auto-Calib: nach Outlier-Filter zu wenig Daten, nutze Default-Werte.")
+            return
+
+        # Typische Distanz: eher im unteren Bereich der Verteilung
+        p60 = np.percentile(distances, 60)
+
+        # Realistischer Bereich begrenzen (z.B. 1.0–2.0 m)
+        self.max_owner_distance_m = float(np.clip(p60, 1.0, 2.0))
+
+        # Bewährter fixer Wert
+        self.min_margin_distance_m = 0.5
 
         print(
             f"[PlayerBallAssigner] Auto-Calib: "
