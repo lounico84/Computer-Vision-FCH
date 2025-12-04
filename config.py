@@ -17,7 +17,7 @@ class PathConfig:
     color_debug_image: Path = "output_video_match/color_debug_e.png"
 
     # Stubs
-    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_e.pkl"
+    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_e_1.pkl"
     team_stub: Path = PROJECT_ROOT / "stubs/team_stubs_e.pkl"
 
     # Analytics
@@ -29,7 +29,7 @@ class PathConfig:
     pitch_image: Path = PROJECT_ROOT / "calibration/pictures/fch_fussballfeld.jpg"
     homography_npy: Path = PROJECT_ROOT / "calibration/data/embrach/aio_homography_cam_to_map.npy"
     homography_npz: Path = PROJECT_ROOT / "calibration/data/embrach/homography.npz"
-    calib_file: Path = PROJECT_ROOT / "calibration/data/kuesnacht/aio_gopro_calib_approx.npz"
+    calib_file: Path = PROJECT_ROOT / "calibration/data/aio_gopro_calib_approx.npz"
     warped_frame_output: Path = PROJECT_ROOT / "calibration/pictures/aio_warped_frame_to_pitch_e_1.png"
 
 @dataclass
