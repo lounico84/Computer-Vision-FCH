@@ -17,7 +17,7 @@ class PathConfig:
     color_debug_image: Path = "output_video_match/color_debug_e.png"
 
     # Stubs
-    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_e_1.pkl"
+    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_e_2.pkl"
     team_stub: Path = PROJECT_ROOT / "stubs/team_stubs_e.pkl"
 
     # Analytics

@@ -5,25 +5,65 @@ import sys
 import os
 import pathlib as Path
 from config import Settings
+
+# Einstellungen laden
 s = Settings()
+analytics_cfg = s.analytics
 
 # ===========================================
-#  Pfade anpassen
+#  PFADE (aus config.py)
 # ===========================================
-VIDEO_FILE = str(s.paths.input_video)           # Match Video
-PITCH_IMG = str(s.paths.pitch_image)            # Top-Down
-H_PIPE    = str(s.paths.homography_npz)
-CALIB_FILE = str(s.paths.calib_file)            # wird erzeugt
-H_FILE     = str(s.paths.homography_npy)        # wird erzeugt
-WARP_OUT   = str(s.paths.warped_frame_output)   # wird erzeugt
+VIDEO_FILE     = str(s.paths.input_video)           # Das Match-Video
+PITCH_IMG_PATH = str(s.paths.pitch_image)           # Das 2D-Spielfeld-Bild
+CALIB_FILE     = str(s.paths.calib_file)            # Die zentrale GoPro-Entzerrung
+H_PIXEL_FILE   = str(s.paths.homography_npy)        # Zwischenspeicher (Pixel-Homographie)
+H_METER_FILE   = str(s.paths.homography_npz)        # FINAL: Meter-Homographie für die Pipeline
+WARP_OUT       = str(s.paths.warped_frame_output)   # Debug-Bild
+
+# Echte Feldgröße aus Config (für die Meter-Umrechnung)
+FIELD_LENGTH_M = analytics_cfg.pitch_length
+FIELD_WIDTH_M  = analytics_cfg.pitch_width
 
 # ===========================================
-#  Hilfsfunktionen
+#  HILFSFUNKTION: Pixel -> Meter Konvertierung
 # ===========================================
-def export_homography_for_pipeline(H_FILE, H_PIPE):
-    H = np.load(H_FILE)
-    H_inv = np.linalg.inv(H)
-    np.savez(H_PIPE, H=H, H_inv=H_inv)
+def export_homography_to_meters(H_pixel, pitch_img_path, out_npz_path):
+    """
+    Nimmt die geklickte Pixel-Homographie, berechnet die Skalierung auf Meter
+    basierend auf der Bildgröße des Pitch-Images und der echten Feldgröße.
+    """
+    img = cv2.imread(pitch_img_path)
+    if img is None:
+        raise FileNotFoundError(f"Pitch-Bild nicht gefunden: {pitch_img_path}")
+    
+    h_img, w_img = img.shape[:2]
+    print(f"\n[Export] Pitch-Bildgröße: {w_img} x {h_img} px")
+    print(f"[Export] Reale Feldgröße: {FIELD_LENGTH_M} x {FIELD_WIDTH_M} m")
+
+    # Skalierungs-Matrix S: Transformiert Pitch-Pixel in echte Meter
+    # Formel: x_meter = (x_pixel / bild_breite) * feld_länge
+    S = np.array([
+        [FIELD_LENGTH_M / w_img, 0.0,                     0.0],
+        [0.0,                    FIELD_WIDTH_M / h_img,   0.0],
+        [0.0,                    0.0,                     1.0]
+    ], dtype=np.float32)
+
+    # Die finale Homographie (Kamera -> Meter) ist S * H_pixel
+    H_meter = S @ H_pixel
+    
+    # Inverse berechnen (Meter -> Kamera)
+    try:
+        H_inv_meter = np.linalg.inv(H_meter)
+    except np.linalg.LinAlgError:
+        print("[ERROR] Homographie ist singulär und nicht invertierbar!")
+        return
+
+    # Speichern für die Pipeline
+    np.savez(out_npz_path, H=H_meter, H_inv=H_inv_meter)
+    
+    print(f"[Export] SUCCESS! Meter-Homographie gespeichert in: {out_npz_path}")
+    print("H_meter Matrix:\n", H_meter)
+
 
 def get_first_frame(video_path):
     cap = cv2.VideoCapture(video_path)
@@ -35,278 +75,166 @@ def get_first_frame(video_path):
         raise RuntimeError("Konnte keinen Frame aus dem Video lesen.")
     return frame
 
-def cam_to_map(H, x, y):
-    """Punkt (x,y) aus Kamera-Koordinaten via H in Pitch-Pixel umrechnen."""
-    p = np.array([x, y, 1.0], dtype=np.float32)
-    p_ = H @ p
-    X = p_[0] / p_[2]
-    Y = p_[1] / p_[2]
-    return float(X), float(Y)
-
 # ===========================================
-#  STEP 1: GoPro grob entzerren (Slider oder Laden)
+#  STEP 1: GoPro Entzerrung (Laden oder Erstellen)
 # ===========================================
 def step1_gopro_calibration(frame):
+    print("\n--- STEP 1: Linsen-Entzerrung ---")
     
-    # --- NEU: Prüfen ob Kalibrierung schon existiert ---
+    # Prüfen, ob die zentrale Kalibrierungsdatei existiert
     if os.path.exists(CALIB_FILE):
-        print(f"\n[INFO] Bestehende Kalibrierung gefunden: {CALIB_FILE}")
-        choice = input("Möchtest du diese laden und Schritt 1 überspringen? (j/n): ").strip().lower()
-        
-        if choice in ['j', 'y', 'ja', 'yes']:
+        print(f"[INFO] Zentrale Kalibrierung gefunden: {CALIB_FILE}")
+        try:
             data = np.load(CALIB_FILE)
             K = data['K']
             dist = data['dist']
-            undist = cv2.undistort(frame, K, dist)
-            print("-> Kalibrierung geladen.")
-            print("K =\n", K)
-            print("dist =", dist)
-            return K, dist, undist
-        else:
-            print("-> Fahre mit manueller Einstellung fort...")
+            
+            # Kurzer Check auf Nullen
+            if np.all(dist == 0):
+                print("[WARNUNG] Datei enthält nur Nullen! Starte manuelle Kalibrierung...")
+            else:
+                undist = cv2.undistort(frame, K, dist)
+                print("-> Automatisch geladen (Gleiche Kamera). Überspringe Slider.")
+                return K, dist, undist
+        except Exception as e:
+            print(f"[ERROR] Fehler beim Laden: {e}. Starte manuelle Kalibrierung...")
 
-    # --- Bestehende Logik (Manuelle Einstellung) ---
+    # Falls nicht vorhanden oder fehlerhaft -> Manuell erstellen
+    print("-> Starte manuelle Kalibrierung (Slider)...")
     h, w = frame.shape[:2]
-    print("Frame size:", w, "x", h)
-
-    # grobe Kameramatrix über angenommenes FOV
-    fov_deg = 120.0   # typisches GoPro-Wide FOV
+    
+    # Initiale Matrix
+    fov_deg = 120.0
     fov_rad = math.radians(fov_deg)
     fx = (w / 2.0) / math.tan(fov_rad / 2.0)
     fy = fx
     cx = w / 2.0
     cy = h / 2.0
+    K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
 
-    K = np.array([[fx, 0,  cx],
-                  [0,  fy, cy],
-                  [0,  0,  1]], dtype=np.float32)
-
-    print("Initiale Kameramatrix K =\n", K)
-
-    cv2.namedWindow('UNDISTORT', cv2.WINDOW_NORMAL)
+    cv2.namedWindow('UNDISTORT (Druecke S zum Speichern)', cv2.WINDOW_NORMAL)
 
     def update(_=None):
-        k1_slider = cv2.getTrackbarPos('k1', 'UNDISTORT')
-        k2_slider = cv2.getTrackbarPos('k2', 'UNDISTORT')
-
-        k1 = (k1_slider - 100) / 100.0   # -1.0 .. +1.0
-        k2 = (k2_slider - 100) / 100.0
-
+        k1 = (cv2.getTrackbarPos('k1', 'UNDISTORT (Druecke S zum Speichern)') - 100) / 100.0
+        k2 = (cv2.getTrackbarPos('k2', 'UNDISTORT (Druecke S zum Speichern)') - 100) / 100.0
         dist = np.array([k1, k2, 0, 0, 0], dtype=np.float32)
-        undist = cv2.undistort(frame, K, dist)
+        vis = cv2.undistort(frame, K, dist)
+        
+        # Info-Text
+        cv2.putText(vis, f"k1={k1:.2f}, k2={k2:.2f}", (20, 40), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.imshow('UNDISTORT (Druecke S zum Speichern)', vis)
 
-        vis = undist.copy()
-        text = f"k1={k1:.3f}, k2={k2:.3f}"
-        cv2.putText(vis, text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
-                    1.0, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.imshow('UNDISTORT', vis)
-
-    cv2.createTrackbar('k1', 'UNDISTORT', 100, 200, update)
-    cv2.createTrackbar('k2', 'UNDISTORT', 100, 200, update)
+    cv2.createTrackbar('k1', 'UNDISTORT (Druecke S zum Speichern)', 100, 200, update)
+    cv2.createTrackbar('k2', 'UNDISTORT (Druecke S zum Speichern)', 100, 200, update)
     update()
 
-    print("\nSTEP 1 – Entzerrung einstellen")
-    print("- Schieberegler k1/k2 ändern, bis die Linien (Seitenauslinie, Mittellinie, Strafraum) möglichst gerade aussehen.")
-    print("- 's' drücken, um K und dist zu speichern und weiterzugehen.")
-    print("- ESC beendet das Programm.\n")
-
-    k1 = 0.0
-    k2 = 0.0
+    print("Stelle die Slider ein, bis Linien gerade sind.")
+    print("Drücke 's', um zu speichern und fortzufahren.")
+    
     while True:
-        key = cv2.waitKey(20) & 0xFF
-        if key == 27:  # ESC
-            cv2.destroyAllWindows()
-            raise SystemExit("Abgebrochen in STEP 1.")
-        if key == ord('s'):
-            k1_slider = cv2.getTrackbarPos('k1', 'UNDISTORT')
-            k2_slider = cv2.getTrackbarPos('k2', 'UNDISTORT')
-            k1 = (k1_slider - 100) / 100.0
-            k2 = (k2_slider - 100) / 100.0
+        if cv2.waitKey(20) & 0xFF == ord('s'):
             break
-
     cv2.destroyAllWindows()
 
+    # Werte auslesen
+    k1 = (cv2.getTrackbarPos('k1', 'UNDISTORT (Druecke S zum Speichern)') - 100) / 100.0
+    k2 = (cv2.getTrackbarPos('k2', 'UNDISTORT (Druecke S zum Speichern)') - 100) / 100.0
     dist = np.array([k1, k2, 0, 0, 0], dtype=np.float32)
+    
+    # Speichern
     np.savez(CALIB_FILE, K=K, dist=dist)
-    print("STEP 1 fertig. Kalibrierung gespeichert als", CALIB_FILE)
-    print("K =\n", K)
-    print("dist =", dist)
-
-    undist = cv2.undistort(frame, K, dist)
-    return K, dist, undist
+    print(f"Kalibrierung gespeichert unter: {CALIB_FILE}")
+    
+    return K, dist, cv2.undistort(frame, K, dist)
 
 # ===========================================
-#  STEP 2: Homographie Kamera -> Pitch bestimmen
+#  STEP 2: Homographie (Punkte klicken)
 # ===========================================
 def step2_homography(cam_img_undist, pitch_img):
-    cam_img = cam_img_undist.copy()
-    map_img = pitch_img.copy()
+    print("\n--- STEP 2: Homographie (Punkte klicken) ---")
+    print("1. Klicke Punkt im VIDEO (z.B. Eckfahne)")
+    print("2. Klicke denselben Punkt auf der MAP")
+    print("-> Mindestens 4 Paare. SPACE zum Berechnen.")
+    
+    cam_display = cam_img_undist.copy()
+    map_display = pitch_img.copy()
+    cam_pts = []
+    map_pts = []
 
-    cam_points = []
-    map_points = []
-    FONT = cv2.FONT_HERSHEY_SIMPLEX
-
-    def cam_mouse_cb(event, x, y, flags, param):
+    def cam_cb(event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
-            cam_points.append((x, y))
-            cv2.circle(cam_img, (x, y), 5, (0, 0, 255), -1)
-            cv2.putText(cam_img, str(len(cam_points)), (x + 5, y - 5),
-                        FONT, 0.6, (0, 0, 255), 2, cv2.LINE_AA)
-            print(f"CAM-Punkt {len(cam_points)}: ({x}, {y})")
+            cam_pts.append((x, y))
+            cv2.circle(cam_display, (x, y), 5, (0, 0, 255), -1)
+            cv2.putText(cam_display, str(len(cam_pts)), (x+5, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
+            cv2.imshow("CAMERA", cam_display)
 
-    def map_mouse_cb(event, x, y, flags, param):
+    def map_cb(event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
-            map_points.append((x, y))
-            cv2.circle(map_img, (x, y), 5, (0, 255, 0), -1)
-            cv2.putText(map_img, str(len(map_points)), (x + 5, y - 5),
-                        FONT, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
-            print(f"MAP-Punkt {len(map_points)}: ({x}, {y})")
+            map_pts.append((x, y))
+            cv2.circle(map_display, (x, y), 5, (0, 255, 0), -1)
+            cv2.putText(map_display, str(len(map_pts)), (x+5, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
+            cv2.imshow("MAP", map_display)
 
-    print("\nSTEP 2 – Homographie bestimmen")
-    print("1) Fenster 'CAMERA' – nacheinander Punkte anklicken (Schnittpunkte von Linien, alles auf Rasenniveau).")
-    print("   -> Mindestens 8–12 Punkte, lieber mehr.")
-    print("   -> Wenn fertig: SPACE.")
-    print("2) Fenster 'MAP' – dieselben Punkte in derselben Reihenfolge anklicken.")
-    print("   -> Fertig: wieder SPACE.")
-    print("3) Danach wird H berechnet.\n")
-
-    # Kamera-Punkte
     cv2.namedWindow("CAMERA", cv2.WINDOW_NORMAL)
-    cv2.setMouseCallback("CAMERA", cam_mouse_cb)
-    while True:
-        cv2.imshow("CAMERA", cam_img)
-        key = cv2.waitKey(20) & 0xFF
-        if key == 27:
-            cv2.destroyAllWindows()
-            raise SystemExit("Abgebrochen in STEP 2 (CAMERA).")
-        if key == 32:  # SPACE
-            break
+    cv2.setMouseCallback("CAMERA", cam_cb)
+    cv2.imshow("CAMERA", cam_display)
 
-    print(f"{len(cam_points)} Kamera-Punkte gewählt.\n")
-
-    # Map-Punkte
     cv2.namedWindow("MAP", cv2.WINDOW_NORMAL)
-    cv2.setMouseCallback("MAP", map_mouse_cb)
-    while True:
-        cv2.imshow("MAP", map_img)
-        key = cv2.waitKey(20) & 0xFF
-        if key == 27:
-            cv2.destroyAllWindows()
-            raise SystemExit("Abgebrochen in STEP 2 (MAP).")
-        if key == 32:  # SPACE
-            break
+    cv2.setMouseCallback("MAP", map_cb)
+    cv2.imshow("MAP", map_display)
 
-    print(f"{len(map_points)} Map-Punkte gewählt.")
+    while True:
+        if cv2.waitKey(20) & 0xFF == 32: # Space Taste
+            break
     cv2.destroyAllWindows()
 
-    if len(cam_points) != len(map_points):
-        raise ValueError("Anzahl Kamera- und Map-Punkte unterschiedlich.")
-    if len(cam_points) < 4:
-        raise ValueError("Zu wenige Punktpaare. Mindestens 4, besser 8+.")
+    if len(cam_pts) < 4:
+        raise ValueError("Zu wenige Punkte! Mindestens 4 notwendig.")
+    if len(cam_pts) != len(map_pts):
+        raise ValueError(f"Ungleiche Anzahl Punkte! Video: {len(cam_pts)}, Map: {len(map_pts)}")
 
-    cam_pts = np.array(cam_points, dtype=np.float32)
-    map_pts = np.array(map_points, dtype=np.float32)
-
-    H, mask = cv2.findHomography(cam_pts, map_pts, cv2.RANSAC)
-    if H is None:
-        raise RuntimeError("Homographie konnte nicht berechnet werden.")
-
-    np.save(H_FILE, H)
-    print("\nSTEP 2 fertig. H gespeichert als", H_FILE)
-    print("H =\n", H)
-
-    # Warp zum Check
-    mh, mw = pitch_img.shape[:2]
-    warped = cv2.warpPerspective(cam_img_undist, H, (mw, mh))
+    # Homographie berechnen (Pixel -> Pixel)
+    H, _ = cv2.findHomography(np.array(cam_pts), np.array(map_pts))
+    
+    # Speichern der RAW-Matrix (optional, falls man später manuell umrechnen will)
+    np.save(H_PIXEL_FILE, H)
+    
+    # Warp Check (Visuelle Prüfung)
+    h_map, w_map = pitch_img.shape[:2]
+    warped = cv2.warpPerspective(cam_img_undist, H, (w_map, h_map))
     cv2.imwrite(WARP_OUT, warped)
-    print("Gewarpter Frame gespeichert als", WARP_OUT)
-
-    stack = np.hstack((pitch_img, warped))
-    cv2.namedWindow("MAP (links) | WARPED CAMERA (rechts)", cv2.WINDOW_NORMAL)
-    cv2.imshow("MAP (links) | WARPED CAMERA (rechts)", stack)
-    print("Vergleich anzeigen – Taste drücken zum Fortfahren.")
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
+    print(f"Visueller Check gespeichert: {WARP_OUT}")
+    
     return H
-
-# ===========================================
-#  STEP 3: Test – Spieler anklicken -> Punkt auf Pitch
-# ===========================================
-def step3_click_test(cam_img_undist, pitch_img, H):
-    cam_vis = cam_img_undist.copy()
-    pitch_vis = pitch_img.copy()
-    FONT = cv2.FONT_HERSHEY_SIMPLEX
-    idx = 0
-
-    def cam_mouse_cb(event, x, y, flags, param):
-        nonlocal idx, cam_vis, pitch_vis
-        if event == cv2.EVENT_LBUTTONDOWN:
-            idx += 1
-            # Kamera markieren
-            cv2.circle(cam_vis, (x, y), 6, (0, 0, 255), -1)
-            cv2.putText(cam_vis, str(idx), (x + 5, y - 5),
-                        FONT, 0.6, (0, 0, 255), 2, cv2.LINE_AA)
-
-            X, Y = cam_to_map(H, x, y)
-            print(f"Klick {idx}: Kamera=({x},{y}) -> Pitch=({X:.1f},{Y:.1f})")
-
-            h, w = pitch_vis.shape[:2]
-            if 0 <= X < w and 0 <= Y < h:
-                cv2.circle(pitch_vis, (int(X), int(Y)), 6, (0, 255, 0), -1)
-                cv2.putText(pitch_vis, str(idx), (int(X) + 5, int(Y) - 5),
-                            FONT, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
-            else:
-                print("  -> Achtung: Punkt außerhalb des Pitch-Bildes.")
-
-    cv2.namedWindow("CAMERA_TEST", cv2.WINDOW_NORMAL)
-    cv2.namedWindow("PITCH_TEST", cv2.WINDOW_NORMAL)
-    cv2.setMouseCallback("CAMERA_TEST", cam_mouse_cb)
-
-    print("\nSTEP 3 – Klick-Test")
-    print("- Im Fenster 'CAMERA_TEST' auf Spieler (Fußpunkt) klicken.")
-    print("- Der Punkt sollte im Fenster 'PITCH_TEST' an der richtigen Feldposition erscheinen.")
-    print("- 'r' = Reset aller Punkte, 'q' oder ESC = Beenden.\n")
-
-    while True:
-        cv2.imshow("CAMERA_TEST", cam_vis)
-        cv2.imshow("PITCH_TEST", pitch_vis)
-        key = cv2.waitKey(20) & 0xFF
-        if key in (27, ord('q')):
-            break
-        if key == ord('r'):
-            cam_vis = cam_img_undist.copy()
-            pitch_vis = pitch_img.copy()
-            idx = 0
-            print("Punkte zurückgesetzt.")
-
-    cv2.destroyAllWindows()
 
 # ===========================================
 #  MAIN
 # ===========================================
 def main():
-    # --- Frame & Pitch laden ---
+    # 1. Daten laden
     frame = get_first_frame(VIDEO_FILE)
-    pitch_img = cv2.imread(PITCH_IMG)
+    pitch_img = cv2.imread(PITCH_IMG_PATH)
     if pitch_img is None:
-        raise FileNotFoundError(f"Pitch-Bild nicht gefunden: {PITCH_IMG}")
+        raise FileNotFoundError(f"Pitch-Bild fehlt: {PITCH_IMG_PATH}")
 
-    # --- STEP 1: Entzerrung ---
+    # 2. Schritt 1: Entzerrung (automatisch laden, wenn vorhanden)
     K, dist, cam_undist = step1_gopro_calibration(frame)
 
-    # --- STEP 2: Homographie ---
-    H = step2_homography(cam_undist, pitch_img)
+    # 3. Schritt 2: Punkte klicken (Pixel -> MapPixel)
+    # Hier musst du für jedes Match NEU klicken!
+    H_pixel = step2_homography(cam_undist, pitch_img)
 
-    # --- STEP 3: Klick-Test ---
-    step3_click_test(cam_undist, pitch_img, H)
+    # 4. Schritt 3: Automatisch in METER umrechnen und speichern
+    print("\n--- STEP 3: Exportiere in Meter... ---")
+    export_homography_to_meters(H_pixel, PITCH_IMG_PATH, H_METER_FILE)
 
-    print("\nFertig. Du hast jetzt:")
-    print(f"- GoPro-Kalibrierung: {CALIB_FILE}")
-    print(f"- Homographie:        {H_FILE}")
-    print(f"- Gewarptes Bild:     {WARP_OUT}")
-
-    export_homography_for_pipeline(H_FILE, H_PIPE)
+    print("\n-----------------------------------------------------------")
+    print("[FERTIG] Kalibrierung erfolgreich abgeschlossen.")
+    print(f"1. Entzerrung geladen von: {CALIB_FILE}")
+    print(f"2. Homographie (Meter) gespeichert in: {H_METER_FILE}")
+    print("-----------------------------------------------------------")
+    print("Du kannst jetzt main.py starten (stelle sicher, dass read_tracks_from_stub=False ist).")
 
 if __name__ == "__main__":
     main()
