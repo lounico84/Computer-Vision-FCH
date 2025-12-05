@@ -3,6 +3,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Dict, List
+from config import Settings
+
+settings = Settings()
 
 
 def _zone(x: float, pitch_length: float) -> str:
@@ -55,6 +58,7 @@ def plot_zone_summary(
       2) Balkendiagramm (Gesamt vs Team 1 vs Team 2)
       3) Pitch mit Zonen und Prozentangaben
     """
+    team_cfg = settings.team_names
     stats = compute_zone_percentages(df, pitch_length)
     zones = stats["zones"]
     total_pct = stats["total"]
@@ -68,7 +72,7 @@ def plot_zone_summary(
     ax.axis("off")
 
     table_data = [
-        ["Zone", "Gesamt %", "Team 1 %", "Team 2 %"],
+        ["Zone", "Gesamt %", f"{team_cfg.team1_name} %", f"{team_cfg.team2_name} %"],
         [zones[0], f"{total_pct[0]:.1f}", f"{t1_pct[0]:.1f}", f"{t2_pct[0]:.1f}"],
         [zones[1], f"{total_pct[1]:.1f}", f"{t1_pct[1]:.1f}", f"{t2_pct[1]:.1f}"],
         [zones[2], f"{total_pct[2]:.1f}", f"{t1_pct[2]:.1f}", f"{t2_pct[2]:.1f}"],
@@ -84,8 +88,8 @@ def plot_zone_summary(
     width = 0.25
 
     ax.bar(x - width, total_pct, width, label="Gesamt")
-    ax.bar(x, t1_pct, width, label="Team 1")
-    ax.bar(x + width, t2_pct, width, label="Team 2")
+    ax.bar(x, t1_pct, width, label=team_cfg.team1_name)
+    ax.bar(x + width, t2_pct, width, label=team_cfg.team2_name)
 
     ax.set_xticks(x, zones)
     ax.set_ylabel("Anteil Ballzeit (%)")
@@ -130,7 +134,7 @@ def plot_zone_summary(
         ax.text(
             x_center,
             pitch_width * 0.30,
-            f"T1: {t1_pct[i]:.1f}%",
+            f"{team_cfg.team1_name}: {t1_pct[i]:.1f}%",
             ha="center",
             va="center",
             fontsize=10,
@@ -141,7 +145,7 @@ def plot_zone_summary(
         ax.text(
             x_center,
             pitch_width * 0.17,
-            f"T2: {t2_pct[i]:.1f}%",
+            f"{team_cfg.team2_name}: {t2_pct[i]:.1f}%",
             ha="center",
             va="center",
             fontsize=10,
