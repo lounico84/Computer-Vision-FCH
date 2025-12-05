@@ -8,6 +8,8 @@ import os
 import torch
 from tqdm import tqdm
 from math import ceil
+from scipy.spatial import Voronoi
+
 from utils import get_bbox_width, get_center_of_bbox, get_bbox_height, pixel_to_pitch, is_homography_available
 from config import Settings
 
@@ -840,6 +842,18 @@ class Tracker:
             referee_dict = tracks["referees"][frame_num] if frame_num < len(tracks["referees"]) else {}
             goalkeeper_dict = tracks["goalkeepers"][frame_num] if frame_num < len(tracks["goalkeepers"]) else {}
 
+            ref_color = (0, 0, 0) 
+            
+            # Wir prüfen kurz alle sichtbaren Spieler: Ist einer "dunkel"?
+            for p in player_dict.values():
+                c = p.get("team_color")
+                if c is not None:
+                    # Helligkeit prüfen (Durchschnitt von B, G, R)
+                    brightness = sum(c) / 3.0
+                    if brightness < 60:  # Wenn ein Team dunkel ist
+                        ref_color = (0, 255, 255) # Wechsle auf Cyan
+                        break
+
             # Draw Players
             for track_id, player in player_dict.items():
                 raw = player.get("team_color")
@@ -851,7 +865,7 @@ class Tracker:
 
             # Draw Referees
             for _, referee in referee_dict.items():
-                frame_copy = self.draw_ellipse(frame_copy, referee["bbox"], (0, 255, 255))
+                frame_copy = self.draw_ellipse(frame_copy, referee["bbox"], ref_color)
 
             # Draw Goalkeepers
             for track_id, goalkeeper in goalkeeper_dict.items():
@@ -902,55 +916,102 @@ class Tracker:
         out.release()
         print(f"Saved annotated video to {output_path}")
 
+    def _draw_voronoi_regions(self, map_img, players_data):
+        """
+        Hilfsmethode: Zeichnet Voronoi-Zellen auf das übergebene Bild.
+        players_data: Liste von Tupeln [(x, y, color_bgr), ...]
+        """
+        # Wir brauchen mindestens 4 Punkte für eine stabile Voronoi-Berechnung
+        if len(players_data) < 4:
+            return map_img
+
+        h, w = map_img.shape[:2]
+        
+        # 1. Koordinaten extrahieren
+        points = np.array([[p[0], p[1]] for p in players_data])
+        
+        # 2. "Dummy-Punkte" weit außerhalb hinzufügen.
+        # Das ist ein Trick, damit SciPy die Regionen am Rand des Spielfelds 
+        # als geschlossene Polygone berechnet, die wir einfach füllen können.
+        dummy_points = [
+            [-w, -h], [-w, 2*h], [2*w, -h], [2*w, 2*h],
+            [-w, h//2], [2*w, h//2], [w//2, -h], [w//2, 2*h]
+        ]
+        points_all = np.vstack([points, np.array(dummy_points)])
+
+        # 3. Voronoi berechnen
+        try:
+            vor = Voronoi(points_all)
+        except Exception:
+            return map_img # Fallback bei numerischen Fehlern
+
+        # Overlay für Transparenz erstellen
+        overlay = map_img.copy()
+
+        # 4. Regionen zeichnen
+        # vor.point_region gibt uns den Index der Region für jeden Input-Punkt
+        for i, region_idx in enumerate(vor.point_region):
+            # Wir interessieren uns nur für die echten Spieler, nicht die Dummies
+            if i >= len(players_data):
+                break
+            
+            region = vor.regions[region_idx]
+            if -1 in region or len(region) == 0:
+                continue
+            
+            # Die Eckpunkte des Polygons holen
+            polygon = [vor.vertices[i] for i in region]
+            polygon = np.array(polygon, dtype=np.int32)
+            
+            # Farbe des Spielers holen
+            color = players_data[i][2]
+            
+            # Polygon gefüllt zeichnen
+            cv2.fillPoly(overlay, [polygon], color)
+
+        # 5. Mit dem Originalbild überblenden (Alpha-Blending)
+        # alpha = 0.4 bedeutet: 40% Farbe, 60% Hintergrund (Spielfeldlinien bleiben sichtbar)
+        alpha = 0.4
+        cv2.addWeighted(overlay, alpha, map_img, 1 - alpha, 0, map_img)
+        
+        return map_img
+
     def draw_live_map(self, frame, tracks, frame_idx, settings, alpha_smooth: float = 0.6):
         """
-        Zeichnet eine Mini-Pitch-Map unten ins Frame:
-        - Spieler: Team 1 (rot), Team 2 (blau)
-        - Torhüter: gelb/cyan
-        - Schiedsrichter: schwarz
-        - Ball: grün
-
-        Positionen wie in aio_click_player_to_pitch.py:
-        Kamera-Pixel -> H (aio_homography_cam_to_map.npy) -> Pitch-Pixel -> skaliert auf Mini-Map.
+        Zeichnet ZWEI Mini-Maps nebeneinander:
+        Links: Klassische Positionen
+        Rechts: Voronoi-Raumkontrolle
         """
-
-        # Safety: Index prüfen
         if frame_idx >= len(tracks["players"]):
             return frame
 
-        # ---------- Lazy Init: nur beim ersten Aufruf laden ----------
+        # ---------- Lazy Init (wie gehabt) ----------
         if not hasattr(self, "_live_map_initialized"):
             self._live_map_initialized = False
-
-            # Pitch-Bild in Originalgröße laden
+            
+            # 1. Pitch laden
             pitch_full = cv2.imread(str(settings.paths.pitch_image))
             if pitch_full is None:
                 print("[live_map] Pitch image not found:", settings.paths.pitch_image)
                 return frame
 
-            # Homographie in Pitch-Pixel (wie im aio-Tool)
+            # 2. Daten laden
             try:
                 H_px = np.load(str(settings.paths.homography_npy))
-            except Exception as e:
-                print("[live_map] Could not load homography npy:", e)
-                return frame
-
-            # Kamera-Kalibrierung laden (K, dist), wie in aio_full_calibration_field / aio_click_player_to_pitch
-            try:
                 calib = np.load(str(settings.paths.calib_file))
                 K = calib["K"]
                 dist = calib["dist"]
             except Exception as e:
-                print("[live_map] Could not load calib file:", e)
+                print("[live_map] Loading error:", e)
                 return frame
 
             full_h, full_w = pitch_full.shape[:2]
-
-            # Zielgröße für Mini-Map
-            map_w, map_h = 350, 210
+            
+            # Zielgröße für EINE Mini-Map (wir machen später zwei davon)
+            map_w, map_h = 350, 210 
             pitch_resized = cv2.resize(pitch_full, (map_w, map_h))
 
-            # Alles im Objekt cachen
+            # Cache
             self._live_map_H_px = H_px
             self._live_map_K = K
             self._live_map_dist = dist
@@ -958,27 +1019,7 @@ class Tracker:
             self._live_map_img_base = pitch_resized
             self._live_map_size = (map_w, map_h)
             self._live_map_history = {
-                "players": {},   # track_id -> np.array([x,y])
-                "gks": {},
-                "refs": {},
-                "ball": None,
-            }
-            self._live_map_initialized = True
-
-            # Zielgröße für Mini-Map
-            map_w, map_h = 350, 210
-            pitch_resized = cv2.resize(pitch_full, (map_w, map_h))
-
-            # Alles im Objekt cachen
-            self._live_map_H_px = H_px
-            self._live_map_full_size = (full_w, full_h)
-            self._live_map_img_base = pitch_resized
-            self._live_map_size = (map_w, map_h)
-            self._live_map_history = {
-                "players": {},   # track_id -> np.array([x,y])
-                "gks": {},
-                "refs": {},
-                "ball": None,
+                "players": {}, "gks": {}, "refs": {}, "ball": None
             }
             self._live_map_initialized = True
 
@@ -988,44 +1029,32 @@ class Tracker:
         H_px = self._live_map_H_px
         full_w, full_h = self._live_map_full_size
         map_w, map_h = self._live_map_size
+        
+        # Wir erstellen ZWEI Basis-Karten
+        map_classic = self._live_map_img_base.copy()
+        map_voronoi = self._live_map_img_base.copy()
 
-        # Frisches Overlay für diesen Frame
-        map_overlay = self._live_map_img_base.copy()
-
-        # ---------- Helper: Kamera-Pixel -> Mini-Map-Pixel ----------
+        # --- Helper: Kamera-Pixel -> Map-Pixel ---
         def cam_to_map_px(x, y):
-            # 1) Punkt aus verzerrtem Video in undistorted-Koordinate bringen
             pts = np.array([[[float(x), float(y)]]], dtype=np.float32)
-
-            # undistortPoints gibt normalisierte Koords (u,v) zurück
+            # Entzerren
             undist_norm = cv2.undistortPoints(pts, self._live_map_K, self._live_map_dist)
             u, v = undist_norm[0, 0]
-
-            # wieder in Pixelkoordinate im undistorted-Bild zurückrechnen
             x_u = self._live_map_K[0, 0] * u + self._live_map_K[0, 2]
             y_u = self._live_map_K[1, 1] * v + self._live_map_K[1, 2]
-
             pts_u = np.array([[[x_u, y_u]]], dtype=np.float32)
-
-            # 2) Homographie auf UNDISTORTED-Pixel anwenden (wie im aio-Tool)
+            
+            # Projizieren
             dst = cv2.perspectiveTransform(pts_u, H_px)
-            X = dst[0, 0, 0]
-            Y = dst[0, 0, 1]
-
-            # außerhalb des Pitch-Bildes? dann ignorieren
+            X, Y = dst[0, 0]
+            
             if X < 0 or X >= full_w or Y < 0 or Y >= full_h:
                 return None
-
-            # 3) Pitch-Pixel -> Mini-Map-Pixel
-            mx = int(X / full_w * map_w)
-            my = int(Y / full_h * map_h)
-            return mx, my
+            # Skalieren auf Mini-Map Größe
+            return int(X / full_w * map_w), int(Y / full_h * map_h)
 
         def smooth(key, pos, store_dict):
-            """Einfache Exponential-Glättung pro track_id."""
-            if pos is None:
-                return None
-
+            if pos is None: return None
             new = np.array(pos, dtype=np.float32)
             if key in store_dict:
                 old = store_dict[key]
@@ -1036,71 +1065,101 @@ class Tracker:
             return int(sm[0]), int(sm[1])
 
         hist = self._live_map_history
+        
+        # Liste für Voronoi-Daten sammeln (x, y, farbe)
+        voronoi_points = []
 
-        # ---------- Spieler (Trikotfarben) ----------
+        # ---------------------------------------------------------
+        # 1. Spieler & Torhüter sammeln & zeichnen
+        # ---------------------------------------------------------
+        
+        # A) Feldspieler
         players = tracks["players"][frame_idx]
         for pid, p in players.items():
-            # Fußpunkt des Spielers (wie beim Klicken auf die Füße)
             x1, y1, x2, y2 = p["bbox"]
-            foot_x = 0.5 * (x1 + x2)
-            foot_y = y2
-
-            pos = cam_to_map_px(foot_x, foot_y)
+            pos = cam_to_map_px(0.5*(x1+x2), y2)
             pos = smooth(pid, pos, hist["players"])
-            if pos is None:
-                continue
-            mx, my = pos
-
+            if pos is None: continue
+            
             raw_color = p.get("team_color")
-            if raw_color is None:
-                color = (180, 180, 180)  # Fallback
+            if raw_color is None: 
+                color = (180, 180, 180)
             else:
-                # team_color kommt schon als BGR-Tuple/-Array aus der TeamAssigner-Logik
                 color = tuple(int(c) for c in np.asarray(raw_color).tolist())
+            
+            # Zeichnen auf Classic Map (Weißer Rand + Farbe)
+            cv2.circle(map_classic, (pos[0], pos[1]), 7, (255, 255, 255), -1) # Rand
+            cv2.circle(map_classic, (pos[0], pos[1]), 5, color, -1)           # Innen
+            
+            # Daten für Voronoi merken
+            voronoi_points.append((pos[0], pos[1], color))
 
-            cv2.circle(map_overlay, (mx, my), 5, color, -1)
-
-        # ---------- Torhüter ----------
+        # B) Torhüter
         gks = tracks["goalkeepers"][frame_idx]
         for gid, g in gks.items():
             x1, y1, x2, y2 = g["bbox"]
-            foot_x = 0.5 * (x1 + x2)
-            foot_y = y2
-
-            pos = cam_to_map_px(foot_x, foot_y)
+            pos = cam_to_map_px(0.5*(x1+x2), y2)
             pos = smooth(gid, pos, hist["gks"])
-            if pos is None:
-                continue
-            mx, my = pos
+            if pos is None: continue
+            
+            color = (0, 200, 255) # Gold/Gelb für Goalie
+            
+            # Zeichnen auf Classic Map (Weißer Rand + Farbe)
+            cv2.circle(map_classic, (pos[0], pos[1]), 8, (255, 255, 255), -1) # Rand etwas größer
+            cv2.circle(map_classic, (pos[0], pos[1]), 6, color, -1)
+                
+            voronoi_points.append((pos[0], pos[1], color))
 
-            color = (0, 0, 255)  # Blue
-            cv2.circle(map_overlay, (mx, my), 7, color, -1)
+        # ---------------------------------------------------------
+        # 2. VORONOI zeichnen (nur auf map_voronoi)
+        # ---------------------------------------------------------
+        # Wir rufen die Hilfsmethode auf, die das Overlay auf map_voronoi malt
+        # Wichtig: Die Punkte haben wir oben schon draufgemalt, das Overlay kommt jetzt drüber (oder drunter?)
+        # Besser: Erst Voronoi (Hintergrund), dann Punkte. 
+        # Da wir oben schon Punkte gemalt haben, ist es etwas unsauber, aber durch Alpha-Blending okay.
+        # Für perfekte Optik: Erst Voronoi auf saubere Map, dann Punkte.
+        # Wir machen es hier live:
+        
+        # Reset map_voronoi to base image to draw polygons first
+        map_voronoi = self._live_map_img_base.copy()
+        map_voronoi = self._draw_voronoi_regions(map_voronoi, voronoi_points)
+        
+        # Jetzt Punkte auf Voronoi-Map nochmal drüber malen, damit sie knallig sind
+        for p in voronoi_points:
+            # Weißer Rand für Kontrast
+            cv2.circle(map_voronoi, (p[0], p[1]), 6, (255,255,255), 1) 
+            cv2.circle(map_voronoi, (p[0], p[1]), 4, p[2], -1)
 
-        # ---------- Schiedsrichter ----------
+        # ---------------------------------------------------------
+        # 3. Schiri & Ball (auf beide Maps)
+        # ---------------------------------------------------------
+        # Schiri
+
+        current_players = tracks["players"][frame_idx]
+        ref_map_color = (0, 0, 0) # Standard Schwarz
+        
+        for p in current_players.values():
+            c = p.get("team_color")
+            if c is not None:
+                if (sum(c) / 3.0) < 60:
+                    ref_map_color = (0, 255, 255)
+                    break
+
         refs = tracks["referees"][frame_idx]
         for rid, r in refs.items():
             x1, y1, x2, y2 = r["bbox"]
-            foot_x = 0.5 * (x1 + x2)
-            foot_y = y2
-
-            pos = cam_to_map_px(foot_x, foot_y)
+            pos = cam_to_map_px(0.5*(x1+x2), y2)
             pos = smooth(rid, pos, hist["refs"])
-            if pos is None:
-                continue
-            mx, my = pos
+            if pos is not None:
+                for m in [map_classic, map_voronoi]:
+                    cv2.circle(m, (pos[0], pos[1]), 5, (255, 255, 255), -1)
+                    cv2.circle(m, (pos[0], pos[1]), 4, ref_map_color, -1)
 
-            # schwarzer Punkt
-            cv2.circle(map_overlay, (mx, my), 5, (0, 0, 0), -1)
-
-        # ---------- Ball ----------
+        # Ball
         ball_dict = tracks["ball"][frame_idx]
         if 1 in ball_dict:
             x1, y1, x2, y2 = ball_dict[1]["bbox"]
-            cx = 0.5 * (x1 + x2)
-            cy = 0.5 * (y1 + y2)
-
-            pos = cam_to_map_px(cx, cy)
-            # Ball speichern als single-Vector in history["ball"]
+            pos = cam_to_map_px(0.5*(x1+x2), 0.5*(y1+y2))
             if pos is not None:
                 if hist["ball"] is None:
                     hist["ball"] = np.array(pos, dtype=np.float32)
@@ -1108,16 +1167,49 @@ class Tracker:
                     new = np.array(pos, dtype=np.float32)
                     hist["ball"] = alpha_smooth * new + (1.0 - alpha_smooth) * hist["ball"]
                 bx, by = int(hist["ball"][0]), int(hist["ball"][1])
-                cv2.circle(map_overlay, (bx, by), 6, (0, 255, 0), -1)  # Grün
+                
+                for m in [map_classic, map_voronoi]:
+                    # Ball schwarz umrandet, innen grün
+                    cv2.circle(m, (bx, by), 5, (0, 0, 0), -1)
+                    cv2.circle(m, (bx, by), 3, (0, 255, 0), -1)
 
-        # ---------- Mini-Map unten ins Frame zeichnen ----------
-        h, w = frame.shape[:2]
-        x0 = 30
-        y0 = h - map_h - 30
-        if y0 < 0:
-            y0 = 10
-        if x0 + map_w > w:
-            x0 = max(0, w - map_w - 10)
+        # ---------------------------------------------------------
+        # 4. Zusammenfügen & Einblenden
+        # ---------------------------------------------------------
+        # Wir setzen einen kleinen schwarzen Balken dazwischen oder kleben direkt
+        separator = np.zeros((map_h, 10, 3), dtype=np.uint8) # 10px schwarzer Abstand
+        combined_maps = np.hstack((map_classic, separator, map_voronoi))
+        
+        # Titel hinzufügen (optional, aber schick)
+        cv2.putText(map_classic, "Positionen", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+        cv2.putText(map_voronoi, "Raumkontrolle", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+        # (Da wir hstack nutzen, müssen wir die Titel VORHER auf die Einzelbilder schreiben, 
+        #  oder nachher auf das combined Image)
+        
+        # Position im Video Frame (unten mitte/rechts)
+        # Die Combined Map ist jetzt (map_w * 2 + 10) breit
+        total_w = map_w * 2 + 10
+        total_h = map_h
+        
+        h_frame, w_frame = frame.shape[:2]
+        x_offset = (w_frame - total_w) // 2  # Zentriert unten
+        y_offset = h_frame - total_h - 40    # 40px vom unteren Rand
+        
+        # Safety Check: Passt es ins Bild?
+        if x_offset < 0: x_offset = 0
+        if y_offset < 0: y_offset = 0
+        
+        # Overlay einfügen
+        # Damit es schön aussieht, machen wir das Overlay leicht transparent zum Video-Hintergrund?
+        # Oder einfach hart drüber? Hier: Hart drüber, aber mit weißem Rahmen.
+        
+        roi = frame[y_offset:y_offset+total_h, x_offset:x_offset+total_w]
+        
+        # Falls ROI kleiner ist (am Rand abgeschnitten), müssen wir aufpassen
+        if roi.shape[:2] == combined_maps.shape[:2]:
+            frame[y_offset:y_offset+total_h, x_offset:x_offset+total_w] = combined_maps
+            
+            # Rahmen drumherum
+            cv2.rectangle(frame, (x_offset-2, y_offset-2), (x_offset+total_w+2, y_offset+total_h+2), (255,255,255), 2)
 
-        frame[y0:y0 + map_h, x0:x0 + map_w] = map_overlay
         return frame
