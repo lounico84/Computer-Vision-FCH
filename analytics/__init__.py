@@ -4,3 +4,4 @@ from .data_loading import load_frame_events
 from .heatmaps import compute_ball_heatmap, plot_ball_heatmap_on_pitch, plot_team_ball_heatmaps_on_pitch
 from .possession import compute_rolling_possession, plot_rolling_possession
 from .zones import compute_zone_percentages, plot_zone_summary
+from .formation import plot_tactical_formation
