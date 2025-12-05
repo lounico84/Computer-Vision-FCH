@@ -165,6 +165,14 @@ def plot_pass_map(
     """
     Zeichnet eine Pass-Map für ein bestimmtes Team mit PFEILEN.
     """
+
+    team_cfg = s.team_names
+    
+    if team == 1:
+        current_team_name = team_cfg.team1_name if team_cfg else "Team 1"
+    else:
+        current_team_name = team_cfg.team2_name if team_cfg else "Team 2"
+
     team_passes = [p for p in passes if p["team"] == team]
     completed = [p for p in team_passes if p["completed"]]
     failed = [p for p in team_passes if not p["completed"]]
@@ -216,7 +224,8 @@ def plot_pass_map(
     draw_arrows(failed, color="red")
 
     # Titel und Labels
-    ax.set_title(f"Pass Map Team {team} (Blau=Erfolg, Rot=Fehlpass)")
+    # Titel setzen (mit dem dynamischen Namen)
+    ax.set_title(f"Pass Map {current_team_name} (Blau=Erfolg, Rot=Fehlpass)")
     ax.set_xlabel("Länge [m]")
     ax.set_ylabel("Breite [m]")
     
