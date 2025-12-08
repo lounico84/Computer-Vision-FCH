@@ -5,3 +5,4 @@ from .heatmaps import compute_ball_heatmap, plot_ball_heatmap_on_pitch, plot_tea
 from .possession import compute_rolling_possession, plot_rolling_possession
 from .zones import compute_zone_percentages, plot_zone_summary
 from .formation import plot_tactical_formation
+from .shots import detect_shots, plot_shot_map
