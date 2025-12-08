@@ -43,7 +43,7 @@ class TrackingConfig:
     fps: int = 30
     read_tracks_from_stub: bool = True      # read current yolo predictions and don't predict again
     resume_track_from_stub: bool = True     # continue with frames for training
-    read_team_from_stub: bool =  True    # read current k-means team assignments
+    read_team_from_stub: bool =  False    # read current k-means team assignments
     resume_team_from_stub: bool = False      # continue with frames for training
     max_ball_interpolation_gap: int = 20
     frame_skip: int = 2
@@ -70,6 +70,9 @@ class AnalyticsConfig:
     max_ball_speed: float = 40.0      # 144 km/h
     pitch_margin: float = 3.0
     pass_min_frames: int = 3
+    goal_width: float = 7.32
+    goal_depth: float = 2.0
+    shot_speed_threshold: float = 16.0
 
 # Global application settings
 @dataclass

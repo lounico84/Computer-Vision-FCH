@@ -296,12 +296,13 @@ class Tracker:
         return frame
 
     # Draw a small overlay for ball position
-    def draw_team_ball_control(self, frame, frame_num, team_ball_control, fps=None):
+    def draw_team_ball_control(self, frame, frame_num, team_ball_control, score1=0, score2=0, event_text=None, fps=None):
         """
         Unten rechts im Champions-League-Stil:
         - links: kleine Clock-Box (weiß)
         - rechts daneben: Scorebar (dunkel, Teamabbr. + Score)
         - darunter: flacher Ballbesitz-Balken in Teamfarben
+        - optional: Event-Text (z.B. bei Toren)
         """
         if fps is None:
             fps = 30
@@ -368,7 +369,7 @@ class Tracker:
 
         total_width = CLOCK_W + GAP + SCORE_W
 
-        # Oben links:
+        # Oben links des Overlays:
         x1 = MARGIN
         x2 = x1 + total_width
 
@@ -401,7 +402,6 @@ class Tracker:
 
         # ----------------------------- #
         # 6) Scorebar (rechts daneben)
-        #    dunkler Balken, CL-Style
         # ----------------------------- #
         score_x1 = clock_x2 + GAP
         score_x2 = x2
@@ -454,10 +454,9 @@ class Tracker:
             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA
         )
 
-        # Score in der Mitte (aktuell 0-0, Goal-API kommt noch)
-        goals1 = 0
-        goals2 = 0
-        score_text = f"{goals1} {goals2}"
+        # --- SCORE ANZEIGE (DYNAMISCH) ---
+        score_text = f"{score1}   {score2}"
+        
         (stw, sth), _ = cv2.getTextSize(score_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
         sx = score_x1 + (SCORE_W - stw) // 2
         sy = score_y1 + SCORE_H // 2 + sth // 3
@@ -468,7 +467,7 @@ class Tracker:
             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2, cv2.LINE_AA
         )
 
-        # kleiner Trennstrich für das mittlere "0   0"
+        # kleiner Trennstrich für das mittlere "X   X"
         center_line_x = score_x1 + SCORE_W // 2
         cv2.line(frame, (center_line_x, score_y1 + 8), (center_line_x, score_y2 - 8), (255, 255, 255), 1)
 
@@ -505,6 +504,24 @@ class Tracker:
             (pos_x2 - 12 - p2w, pos_y2 - 8),
             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA
         )
+
+        # ----------------------------- #
+        # 8) Event Overlay (z.B. TOR)
+        # ----------------------------- #
+        if event_text:
+            # Ein roter Text in der Mitte oder unten
+            text_scale = 1.5
+            thickness = 3
+            (tw, th), _ = cv2.getTextSize(event_text, cv2.FONT_HERSHEY_SIMPLEX, text_scale, thickness)
+            
+            # Position: Horizontal zentriert, Vertikal etwas unterhalb der Mitte
+            tx = (w - tw) // 2
+            ty = h - 150 
+
+            # Schwarzer Schatten/Rand für Lesbarkeit
+            cv2.putText(frame, event_text, (tx+2, ty+2), cv2.FONT_HERSHEY_SIMPLEX, text_scale, (0,0,0), thickness+2, cv2.LINE_AA)
+            # Roter Text
+            cv2.putText(frame, event_text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, text_scale, (0, 0, 255), thickness, cv2.LINE_AA)
 
         return frame
     
@@ -553,6 +570,44 @@ class Tracker:
         # Returns a list of annotated frames to be written to a video file
         return output_video_frame
     
+    def _get_referee_color(self, player_dict):
+        """
+        Hilfsmethode: Entscheidet die Farbe für den Schiedsrichter.
+        """
+        # Standard: Cyan (0, 255, 255)
+        current_style_color = (0, 255, 255)
+        # Wunsch: Schwarz (0, 0, 0)
+        black_style_color = (0, 0, 0)
+
+        # 1. Teamfarben aus den aktuellen Spielern sammeln
+        team_colors = []
+        for p in player_dict.values():
+            color = p.get("team_color")
+            if color is not None:
+                # Numpy array zu Tuple für Vergleich
+                if isinstance(color, np.ndarray):
+                    c = tuple(int(x) for x in color)
+                else:
+                    c = color
+                if c not in team_colors:
+                    team_colors.append(c)
+
+        # 2. Prüfen: Ist eines der Teams "dunkel"?
+        # Wir prüfen die Helligkeit (Durchschnitt der BGR Werte)
+        is_conflict = False
+        for c in team_colors:
+            brightness = sum(c) / 3.0
+            # Schwellenwert: Alles unter 60 gilt als "Schwarz/Dunkelgrau"
+            if brightness < 60: 
+                is_conflict = True
+                break
+
+        # 3. Entscheidung
+        if is_conflict:
+            return current_style_color # Konflikt -> Cyan behalten
+        else:
+            return black_style_color   # Kein Konflikt -> Schwarz
+
     # Stabalizes track_id: every track_id is assigned to one role player, goalkeeper or referee
     def _stabilize_roles_per_track(
         self,
@@ -796,121 +851,156 @@ class Tracker:
         return tracks
     
     def draw_annotations_to_video(self, input_video_path, tracks, team_ball_control, output_path, fps=30, frame_skip: int = 1, settings=None):
-        """
-        Liest das Input-Video frame-weise,
-        zeichnet die Overlays und schreibt direkt in eine Ausgabedatei.
-        Kein Sammeln aller Frames im RAM.
-        """
         if settings is None:
             from config import Settings
             settings = Settings()
+            
+        # Parameter laden
+        pitch_L = settings.analytics.pitch_length
+        pitch_W = settings.analytics.pitch_width
+        goal_W  = settings.analytics.goal_width
+        goal_D  = settings.analytics.goal_depth
+        shot_speed_limit = settings.analytics.shot_speed_threshold
 
         cap = cv2.VideoCapture(input_video_path)
-        if not cap.isOpened():
-            raise RuntimeError(f"Could not open video: {input_video_path}")
-
+        if not cap.isOpened(): raise RuntimeError(f"Could not open video")
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if frame_skip < 1:
-            frame_skip = 1
-
+        if frame_skip < 1: frame_skip = 1
         effective_total_frames = ceil(total_frames / frame_skip)
+        
+        # --- ZUSTANDS-VARIABLEN FÜR SPIELSTAND & EVENTS ---
+        score_team1 = 0
+        score_team2 = 0
+        goal_cooldown = 0       # Damit ein Tor nicht 30x pro Sekunde zählt
+        
+        current_event_text = None
+        event_display_frames = 0
+        
+        prev_ball_pos_m = None  # Für Geschwindigkeitsberechnung
+        
         frame_num = 0
 
-        # Zustandsvariablen für stabilen Ballmarker
-        prev_ball_center = None
-        max_jump_px = 150
-        min_ball_size = 3
-        max_ball_size = 80
-
-        for _ in tqdm(range(effective_total_frames), desc="Progress"):
+        for _ in tqdm(range(effective_total_frames), desc="Rendering"):
             ret, frame = cap.read()
-            if not ret:
-                break
-
+            if not ret: break
             frame_copy = frame.copy()
 
+            # Daten holen
             player_dict = tracks["players"][frame_num] if frame_num < len(tracks["players"]) else {}
-            # store for possession bar
-            self.current_players = player_dict
             ball_dict = tracks["ball"][frame_num] if frame_num < len(tracks["ball"]) else {}
             referee_dict = tracks["referees"][frame_num] if frame_num < len(tracks["referees"]) else {}
             goalkeeper_dict = tracks["goalkeepers"][frame_num] if frame_num < len(tracks["goalkeepers"]) else {}
+            self.current_players = player_dict # Für Scoreboard Farben
 
-            ref_color = (0, 0, 0) 
+            # --- 1. Zeichnen (Standard) ---
+            # Players
+            ref_color = self._get_referee_color(player_dict) # Wenn du die Methode von vorhin hast
+            for tid, p in player_dict.items():
+                c = p.get("team_color", (0,255,255))
+                if isinstance(c, np.ndarray): c = tuple(int(x) for x in c)
+                frame_copy = self.draw_ellipse(frame_copy, p["bbox"], c, tid)
+                if p.get("has_ball"): self.draw_triangle(frame_copy, p["bbox"], (0,0,255))
             
-            # Wir prüfen kurz alle sichtbaren Spieler: Ist einer "dunkel"?
-            for p in player_dict.values():
-                c = p.get("team_color")
-                if c is not None:
-                    # Helligkeit prüfen (Durchschnitt von B, G, R)
-                    brightness = sum(c) / 3.0
-                    if brightness < 60:  # Wenn ein Team dunkel ist
-                        ref_color = (0, 255, 255) # Wechsle auf Cyan
-                        break
+            # Refs & Goalies
+            for _, r in referee_dict.items(): self.draw_ellipse(frame_copy, r["bbox"], ref_color)
+            for tid, g in goalkeeper_dict.items(): self.draw_ellipse(frame_copy, g["bbox"], (255,0,0), tid)
 
-            # Draw Players
-            for track_id, player in player_dict.items():
-                raw = player.get("team_color")
-                color = (0, 255, 255) if raw is None else tuple(int(x) for x in np.asarray(raw).tolist())
-                frame_copy = self.draw_ellipse(frame_copy, player["bbox"], color, track_id)
-
-                if player.get("has_ball", False):
-                    frame_copy = self.draw_triangle(frame_copy, player["bbox"], (0, 0, 255))
-
-            # Draw Referees
-            for _, referee in referee_dict.items():
-                frame_copy = self.draw_ellipse(frame_copy, referee["bbox"], ref_color)
-
-            # Draw Goalkeepers
-            for track_id, goalkeeper in goalkeeper_dict.items():
-                frame_copy = self.draw_ellipse(frame_copy, goalkeeper["bbox"], (255, 0, 0), track_id)
-                if goalkeeper.get("has_ball", False):
-                    frame_copy = self.draw_triangle(frame_copy, goalkeeper["bbox"], (0, 0, 255))
-
-            # Draw Ball mit Plausibilitäts-Filter
-            for _, ball in ball_dict.items():
-                bbox = ball["bbox"]
-                x1, y1, x2, y2 = bbox
-                w = x2 - x1
-                h = y2 - y1
-
-                # Größenfilter
-                if w < min_ball_size or h < min_ball_size or w > max_ball_size or h > max_ball_size:
-                    continue
-
+            # --- 2. BALL LOGIK (Tore & Schüsse) ---
+            ball_m_x, ball_m_y = None, None
+            
+            if 1 in ball_dict:
+                bbox = ball_dict[1]["bbox"]
+                frame_copy = self.draw_triangle(frame_copy, bbox, (0, 255, 0))
+                
+                # Meter-Koordinaten holen (mit deiner neuen pixel_to_pitch Funktion!)
                 cx, cy = get_center_of_bbox(bbox)
+                bmx, bmy = pixel_to_pitch(cx, cy)
+                
+                if np.isfinite(bmx) and np.isfinite(bmy):
+                    ball_m_x, ball_m_y = bmx, bmy
 
-                plausible = True
-                if prev_ball_center is not None:
-                    dx = cx - prev_ball_center[0]
-                    dy = cy - prev_ball_center[1]
-                    dist = (dx * dx + dy * dy) ** 0.5
-                    if dist > max_jump_px:
-                        plausible = False
+            # A) SCHUSS-ERKENNUNG
+            if ball_m_x is not None and prev_ball_pos_m is not None:
+                # Distanz in Metern seit letztem Frame
+                dx = ball_m_x - prev_ball_pos_m[0]
+                dy = ball_m_y - prev_ball_pos_m[1]
+                dist_m = (dx**2 + dy**2)**0.5
+                
+                # Geschwindigkeit m/s (dist * FPS) -> Achtung: frame_skip beachten!
+                # Zeit pro Step = 1/fps * frame_skip
+                dt = (1.0 / fps) * frame_skip
+                speed_ms = dist_m / dt
+                
+                # Ist es ein Schuss? (Schnell & Richtung Tor)
+                # Team 1 schießt auf Tor 2 (x=100), Team 2 auf Tor 1 (x=0)
+                # Einfache Heuristik: Sehr schnell in Tornähe
+                if speed_ms > shot_speed_limit and goal_cooldown == 0:
+                    # Richtung prüfen
+                    is_shooting_t1 = (dx > 0 and ball_m_x > pitch_L * 0.6) # Nach rechts
+                    is_shooting_t2 = (dx < 0 and ball_m_x < pitch_L * 0.4) # Nach links
+                    
+                    if is_shooting_t1 or is_shooting_t2:
+                        current_event_text = f"SCHUSS ({speed_ms*3.6:.0f} km/h)!"
+                        event_display_frames = 15 # 0.5 Sekunden anzeigen
 
-                if plausible:
-                    frame_copy = self.draw_triangle(frame_copy, bbox, (0, 255, 0))
-                    prev_ball_center = (cx, cy)
-                # unplausible Beobachtung -> nichts zeichnen
+            # Cache updaten
+            if ball_m_x is not None:
+                prev_ball_pos_m = (ball_m_x, ball_m_y)
 
-            # Draw Team Ball Control
-            frame_copy = self.draw_team_ball_control(frame_copy, frame_num, team_ball_control, fps=fps)
+            # B) TOR-ERKENNUNG
+            # Cooldown runterzählen
+            if goal_cooldown > 0:
+                goal_cooldown -= 1
+            
+            if ball_m_x is not None and goal_cooldown == 0:
+                # Tor-Mitte Y
+                goal_center_y = pitch_W / 2.0
+                half_goal = goal_W / 2.0
+                
+                # Ist Ball im Y-Bereich des Tores? (y zwischen Pfosten)
+                in_goal_y = (goal_center_y - half_goal) < ball_m_y < (goal_center_y + half_goal)
+                
+                if in_goal_y:
+                    # TOR 1 (Links, x < 0) -> Team 2 hat getroffen
+                    if ball_m_x < 0 and ball_m_x > -goal_D:
+                        score_team2 += 1
+                        current_event_text = "TOR FUER TEAM 2 !!!"
+                        event_display_frames = 60 # 2 Sekunden anzeigen
+                        goal_cooldown = fps * 10  # 10 Sekunden Pause, damit es nicht doppelt zählt
+                        
+                    # TOR 2 (Rechts, x > 100) -> Team 1 hat getroffen
+                    elif ball_m_x > pitch_L and ball_m_x < (pitch_L + goal_D):
+                        score_team1 += 1
+                        current_event_text = "TOR FUER TEAM 1 !!!"
+                        event_display_frames = 60
+                        goal_cooldown = fps * 10
+
+            # Event Text Management
+            text_to_show = None
+            if event_display_frames > 0:
+                text_to_show = current_event_text
+                event_display_frames -= 1
+            
+            # --- 3. Overlays zeichnen ---
+            # Score übergeben!
+            frame_copy = self.draw_team_ball_control(
+                frame_copy, frame_num, team_ball_control, 
+                score1=score_team1, score2=score_team2, 
+                event_text=text_to_show, fps=fps
+            )
+            
             frame_copy = self.draw_live_map(frame_copy, tracks, frame_num, settings)
 
             out.write(frame_copy)
             frame_num += 1
 
-            # Zwischengelagerte Frames überspringen
             for _ in range(frame_skip - 1):
-                ret_skip, _ = cap.read()
-                if not ret_skip:
-                    break
+                cap.read() # Skip
 
         cap.release()
         out.release()
