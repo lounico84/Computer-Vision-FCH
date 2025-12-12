@@ -453,3 +453,150 @@ def plot_pass_zones(passes, pitch_length):
     ax.spines['left'].set_color('white')
     
     plt.show()
+
+def plot_pass_length_distribution(passes, team1_name, team2_name):
+    """
+    Zeigt die Verteilung der Passlängen als Histogramm (Kurzpass vs. Langpass).
+    """
+    # Distanzen berechnen
+    def get_distances(team_id):
+        dists = []
+        for p in passes:
+            if p["team"] == team_id and p["completed"]:
+                dx = p["end_x"] - p["start_x"]
+                dy = p["end_y"] - p["start_y"]
+                dist = math.hypot(dx, dy)
+                dists.append(dist)
+        return dists
+
+    d1 = get_distances(1)
+    d2 = get_distances(2)
+
+    # Plot Setup
+    fig, ax = plt.subplots(figsize=(10, 5))
+    fig.set_facecolor('#22312b')
+    ax.set_facecolor('#22312b')
+
+    # Histogramm
+    # alpha=0.6 macht es durchsichtig, damit man Überlappungen sieht
+    bins = np.linspace(0, 60, 20) # 0 bis 60 Meter in 3-Meter-Schritten
+    
+    ax.hist(d1, bins=bins, color='#00bfff', alpha=0.6, label=team1_name, edgecolor='none')
+    ax.hist(d2, bins=bins, color='#dc143c', alpha=0.6, label=team2_name, edgecolor='none')
+
+    # Styling
+    ax.set_title("Verteilung der Passlängen (Spielstil)", color='white', fontsize=14, pad=15)
+    ax.set_xlabel("Länge in Metern", color='white')
+    ax.set_ylabel("Anzahl Pässe", color='white')
+    
+    # Achsen weiß machen
+    ax.spines['bottom'].set_color('white')
+    ax.spines['left'].set_color('white')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.tick_params(axis='x', colors='white')
+    ax.tick_params(axis='y', colors='white')
+
+    # Legende
+    legend = ax.legend(facecolor='#22312b', edgecolor='white')
+    for text in legend.get_texts(): text.set_color("white")
+    
+    plt.show()
+
+# ... (dein bestehender Code in analytics/pass_maps.py) ...
+
+def plot_pass_stats_dashboard(passes, team1_name, team2_name):
+    """
+    Erstellt ein Dashboard mit Donut-Charts für die Passquote und einem Balkenvergleich.
+    """
+    # 1. Daten aggregieren
+    def get_stats(team_id):
+        t_passes = [p for p in passes if p["team"] == team_id]
+        total = len(t_passes)
+        completed = sum(1 for p in t_passes if p["completed"])
+        failed = total - completed
+        percent = (completed / total * 100) if total > 0 else 0
+        return total, completed, failed, percent
+
+    t1_total, t1_ok, t1_fail, t1_pct = get_stats(1)
+    t2_total, t2_ok, t2_fail, t2_pct = get_stats(2)
+
+    # 2. Setup Figure (Dark Mode)
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    fig.set_facecolor('#22312b')
+    
+    # Farben
+    c1 = '#00bfff' # Cyan
+    c2 = '#dc143c' # Rot
+    c_bg = '#445550' # Dunkles Grau für "Rest" im Donut
+
+    # --- FUNKTION: DONUT ZEICHNEN ---
+    def draw_donut(ax, pct, total, color, title):
+        ax.set_facecolor('#22312b')
+        
+        # Daten für Pie: [Erfolg, Rest]
+        # Wir starten bei 90° (Oben)
+        wedges, _ = ax.pie(
+            [pct, 100-pct], 
+            colors=[color, c_bg], 
+            startangle=90, 
+            counterclock=False, # Im Uhrzeigersinn
+            wedgeprops=dict(width=0.3, edgecolor='#22312b') # width=0.3 macht es zum Ring
+        )
+        
+        # Text in der Mitte
+        ax.text(0, 0, f"{int(pct)}%", ha='center', va='center', color='white', fontsize=26, fontweight='bold')
+        ax.text(0, -0.4, "Quote", ha='center', va='center', color='#c7d5cc', fontsize=10)
+        
+        # Titel & Total
+        ax.set_title(title, color='white', fontsize=16, pad=10, fontweight='bold')
+        # Total unter dem Chart
+        ax.text(0, -1.2, f"Total: {total} Pässe", ha='center', va='center', color='white', fontsize=12)
+
+    # --- FUNKTION: BALKEN VERGLEICH ---
+    def draw_bars(ax):
+        ax.set_facecolor('#22312b')
+        
+        # Positionen
+        y = [0, 1]
+        labels = [team1_name, team2_name]
+        totals = [t1_total, t2_total]
+        oks = [t1_ok, t2_ok]
+        
+        # Balken Hintergrund (Total) - Halbtransparent
+        ax.barh(y, totals, height=0.5, color=[c1, c2], alpha=0.3, label='Versuche')
+        # Balken Vordergrund (Angekommen) - Voll
+        bars = ax.barh(y, oks, height=0.5, color=[c1, c2], alpha=1.0, label='Angekommen')
+        
+        # Zahlen in/neben die Balken schreiben
+        for i, rect in enumerate(bars):
+            # Text: "114 / 160"
+            text_str = f"{oks[i]} / {totals[i]}"
+            ax.text(rect.get_width() + 1, rect.get_y() + rect.get_height()/2, 
+                    text_str, va='center', color='white', fontweight='bold')
+
+        # Styling
+        ax.set_yticks(y)
+        ax.set_yticklabels(labels, color='white', fontsize=12, fontweight='bold')
+        ax.set_title("Pass-Volumen (Angekommen / Total)", color='white', fontsize=14)
+        
+        # Rahmen entfernen
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_color('#c7d5cc')
+        ax.spines['left'].set_visible(False)
+        ax.tick_params(axis='x', colors='white')
+        ax.tick_params(axis='y', length=0) # Keine Striche an der Y-Achse
+
+    # 3. Plotten
+    # Links: Team 1 Donut
+    draw_donut(axes[0], t1_pct, t1_total, c1, team1_name)
+    
+    # Mitte: Balken Vergleich
+    draw_bars(axes[1])
+    
+    # Rechts: Team 2 Donut
+    draw_donut(axes[2], t2_pct, t2_total, c2, team2_name)
+
+    plt.tight_layout()
+    plt.show()
