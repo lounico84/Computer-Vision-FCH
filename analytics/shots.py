@@ -133,7 +133,8 @@ def plot_shot_map(shots, pitch_img, length, width, team1_name="Team 1", team2_na
     Visualisiert Schüsse auf dem Spielfeld.
     """
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.imshow(pitch_img, extent=[0, length, 0, width], alpha=0.9)
+    ax.invert_yaxis()
+    ax.imshow(pitch_img, extent=[0, length, width, 0], alpha=0.9)
     
     # Tore einzeichnen
     goal_w = analytics_cfg.goal_width

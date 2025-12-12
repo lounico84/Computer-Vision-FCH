@@ -21,8 +21,10 @@ def plot_tactical_formation(df, pitch_img, length, width, team1_name, team2_name
     ]
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.imshow(pitch_img, extent=[0, length, 0, width], alpha=0.8)
 
+    ax.invert_yaxis()
+    ax.imshow(pitch_img, extent=[0, length, width, 0], alpha=0.8)
+    
     # Helper für das Plotten eines Teams
     def plot_team_clusters(team_id, color, label_name, marker_style):
         # 1. Alle Koordinaten dieses Teams holen
