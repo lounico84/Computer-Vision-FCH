@@ -97,7 +97,8 @@ def detect_passes(
         t0 = endA
         t_end = min(endA + kick_frames, startB)
         kick_window = speed[t0:t_end+1]
-        if len(kick_window) == 0 or np.nanmax(kick_window) < speed_threshold:
+
+        if len(kick_window) == 0 or np.all(np.isnan(kick_window)) or np.nanmax(kick_window) < speed_threshold:
             continue
 
         # Positionen

@@ -38,6 +38,8 @@ def plot_ball_heatmap_on_pitch(
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 6))
 
+    ax.invert_yaxis()
+
     # Hintergrund: sehr leicht sichtbar
     ax.imshow(
         pitch_img,
@@ -77,7 +79,7 @@ def plot_ball_heatmap_on_pitch(
     ax.imshow(
         H_norm.T,
         extent=[0, pitch_length, 0, pitch_width],
-        origin="lower",
+        origin="upper",
         cmap=cmap,
         interpolation="bilinear",
         alpha=0.85,      # <--- Heatmap deutlich sichtbarer
@@ -107,6 +109,9 @@ def plot_team_ball_heatmaps_on_pitch(
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
 
     for team_id, ax in zip([1, 2], axes):
+
+        ax.invert_yaxis()
+
         mask = (
             df["ball_x_m"].notna()
             & df["ball_y_m"].notna()
@@ -144,7 +149,7 @@ def plot_team_ball_heatmaps_on_pitch(
             ax.imshow(
                 H_norm.T,
                 extent=[0, pitch_length, 0, pitch_width],
-                origin="lower",
+                origin="upper",
                 cmap="jet",
                 alpha=0.65,
                 aspect="equal",

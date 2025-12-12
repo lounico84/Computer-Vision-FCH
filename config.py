@@ -10,32 +10,35 @@ class PathConfig:
     model_path: Path = "yolo_training/models/fifth_model/run1/weights/best.pt"
 
     # Videos
-    input_video: Path = "input_videos_match/Test/embrach_test_clip.mp4"
+    input_video: Path = "input_videos_match/Test/kuesnacht_test_clip5.mp4"
 
     # Output
     output_video: Path = "output_video_match/output_video_e.avi"
     color_debug_image: Path = "output_video_match/color_debug_e.png"
 
     # Stubs
-    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_e_2.pkl"
-    team_stub: Path = PROJECT_ROOT / "stubs/team_stubs_e.pkl"
+    tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_5_1.pkl"
+    team_stub: Path = PROJECT_ROOT / "stubs/team_stubs_k_5_2.pkl"
 
     # Analytics
-    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events/frame_events_e.csv"
+    frame_events_csv: Path = PROJECT_ROOT / "analytics/frame_events/frame_events_k_5_2.csv"
     pass_map_team1: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team1.png"
     pass_map_team2: Path = PROJECT_ROOT / "analytics/pass_maps/pass_map_team2.png"
 
     # Calibration
     pitch_image: Path = PROJECT_ROOT / "calibration/pictures/fch_fussballfeld.jpg"
-    homography_npy: Path = PROJECT_ROOT / "calibration/data/embrach/aio_homography_cam_to_map.npy"
-    homography_npz: Path = PROJECT_ROOT / "calibration/data/embrach/homography.npz"
+    homography_npy: Path = PROJECT_ROOT / "calibration/data/kuesnacht/aio_homography_cam_to_map.npy"
+    homography_npz: Path = PROJECT_ROOT / "calibration/data/kuesnacht/homography.npz"
     calib_file: Path = PROJECT_ROOT / "calibration/data/aio_gopro_calib_approx.npz"
     warped_frame_output: Path = PROJECT_ROOT / "calibration/pictures/aio_warped_frame_to_pitch_e_1.png"
+
+    report_notebook: Path = PROJECT_ROOT / "match_analytics.ipynb"
+    report_pdf: Path = PROJECT_ROOT / "analytics/match_analytics.pdf"
 
 @dataclass
 class TeamNamesConfig:
     team1_name: str = "FCH"
-    team2_name: str = "FCE"
+    team2_name: str = "FCK"
 
 # Configuration for model inference and tracking behavior
 @dataclass
