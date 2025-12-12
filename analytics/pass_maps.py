@@ -317,3 +317,139 @@ def create_pass_maps_from_csv(
         out_path=out_path_team2,
         pitch_image_path=pitch_image_path,
     )
+
+def plot_pass_sonar(passes, team_id, team_name, color):
+    """
+    Erstellt ein 'Pass Sonar' (Polar-Diagramm), das zeigt, in welche Richtung
+    ein Team hauptsächlich passt (Vorwärts, Rückwärts, Seitwärts).
+    """
+    # 1. Daten filtern
+    team_passes = [p for p in passes if p["team"] == team_id and p["completed"]]
+    
+    if not team_passes:
+        return
+
+    angles = []
+    for p in team_passes:
+        dx = p["end_x"] - p["start_x"]
+        dy = p["end_y"] - p["start_y"]
+        
+        # Winkel berechnen (-pi bis +pi)
+        angle = np.arctan2(dy, dx)
+        
+        # WICHTIG: Normalisierung der Spielrichtung!
+        # Team 1 spielt (meist) von Links nach Rechts (0° = Vorwärts)
+        # Team 2 spielt von Rechts nach Links (180°/-180° = Vorwärts)
+        # Wir drehen Team 2 um 180 Grad, damit "Vorwärts" im Diagramm immer Rechts (oder Oben) ist.
+        if team_id == 2:
+            angle = angle + np.pi
+            # Winkel im Bereich -pi bis pi halten
+            if angle > np.pi: angle -= 2*np.pi
+        
+        angles.append(angle)
+
+    # 2. Polar Histogramm erstellen
+    # Wir teilen den Kreis in 12 Sektoren (je 30 Grad)
+    n_bins = 12
+    # Bins von -pi bis pi
+    bins = np.linspace(-np.pi, np.pi, n_bins + 1)
+    
+    hist, _ = np.histogram(angles, bins=bins)
+    
+    # Polarplot braucht Breiten und Zentren der Balken
+    width = (2 * np.pi) / n_bins
+    # Zentren berechnen (Mitte zwischen den Bins)
+    theta = bins[:-1] + width / 2
+
+    # 3. Plotten
+    fig = plt.figure(figsize=(6, 6))
+    ax = fig.add_subplot(111, projection='polar')
+    
+    # Hintergrund dunkel
+    fig.set_facecolor('#22312b')
+    ax.set_facecolor('#22312b')
+    
+    # Balken zeichnen
+    bars = ax.bar(theta, hist, width=width, bottom=0.0, color=color, alpha=0.8, edgecolor='white')
+    
+    # Styling
+    ax.set_title(f"{team_name}\nPass-Richtungen", color='white', fontsize=14, pad=20)
+    
+    # Grid anpassen
+    ax.grid(True, color='#c7d5cc', alpha=0.3)
+    ax.spines['polar'].set_visible(False)
+    
+    # Labels entfernen (y-Achse), aber Richtungen beschriften
+    ax.set_yticklabels([])
+    
+    # Himmelsrichtungen anpassen
+    # 0 = Rechts (Vorwärts), pi = Links (Rückwärts), pi/2 = Unten/Oben (Quer)
+    ax.set_xticks([0, np.pi/2, np.pi, 3*np.pi/2])
+    ax.set_xticklabels(['Vorwärts', 'Quer', 'Rückwärts', 'Quer'], color='white')
+
+    plt.show()
+
+def plot_pass_zones(passes, pitch_length):
+    """
+    Zeigt als Balkendiagramm, wie viele Pässe im Defensiv-, Mittel- und Angriffsdrittel gespielt wurden.
+    """
+    zones = ["Defensiv", "Mittel", "Angriff"]
+    
+    def count_zones(team_id):
+        t_passes = [p for p in passes if p["team"] == team_id]
+        counts = [0, 0, 0] # Def, Mid, Att
+        
+        limit1 = pitch_length / 3.0
+        limit2 = 2 * pitch_length / 3.0
+        
+        for p in t_passes:
+            x = p["start_x"]
+            # Team 1: 0->100
+            if team_id == 1:
+                if x < limit1: counts[0] += 1
+                elif x < limit2: counts[1] += 1
+                else: counts[2] += 1
+            # Team 2: 100->0 (Spiegeln)
+            else:
+                if x > limit2: counts[0] += 1 # Eigene Hälfte ist bei hohem X
+                elif x > limit1: counts[1] += 1
+                else: counts[2] += 1
+        return counts
+
+    c1 = count_zones(1)
+    c2 = count_zones(2)
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 5))
+    fig.set_facecolor('#22312b')
+    ax.set_facecolor('#22312b')
+    
+    x = np.arange(len(zones))
+    width = 0.35
+    
+    # Team 1 Balken
+    rects1 = ax.bar(x - width/2, c1, width, label='Team 1', color='#00bfff')
+    # Team 2 Balken
+    rects2 = ax.bar(x + width/2, c2, width, label='Team 2', color='#dc143c')
+    
+    ax.set_ylabel('Anzahl Pässe', color='white')
+    ax.set_title('Pässe nach Spielfeld-Drittel', color='white', fontsize=14)
+    ax.set_xticks(x)
+    ax.set_xticklabels(zones, color='white')
+    ax.tick_params(axis='y', colors='white')
+    
+    # Legende
+    leg = ax.legend(facecolor='#22312b', edgecolor='white')
+    for text in leg.get_texts(): text.set_color("white")
+    
+    # Werte über Balken schreiben
+    ax.bar_label(rects1, padding=3, color='white')
+    ax.bar_label(rects2, padding=3, color='white')
+    
+    # Rahmen weg
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_color('white')
+    ax.spines['left'].set_color('white')
+    
+    plt.show()
