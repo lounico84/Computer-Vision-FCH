@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import cv2
 import math
+from mplsoccer import Pitch
 from config import Settings
 
 s = Settings()
@@ -130,53 +131,85 @@ def detect_shots(df, fps):
 
 def plot_shot_map(shots, pitch_img, length, width, team1_name="Team 1", team2_name="Team 2"):
     """
-    Visualisiert Schüsse auf dem Spielfeld.
+    Visualisiert Schüsse im 'Profi-Look' (Dark Mode).
     """
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.invert_yaxis()
-    ax.imshow(pitch_img, extent=[0, length, width, 0], alpha=0.9)
-    
-    # Tore einzeichnen
-    goal_w = analytics_cfg.goal_width
-    mid_y = width / 2
-    ax.plot([0, 0], [mid_y - goal_w/2, mid_y + goal_w/2], color="white", linewidth=5, zorder=1)
-    ax.plot([length, length], [mid_y - goal_w/2, mid_y + goal_w/2], color="white", linewidth=5, zorder=1)
+    # 1. SETUP: Pitch im Dark-Mode
+    # Wir nutzen 'custom' Maße, damit es zu deinen Daten passt
+    pitch = Pitch(
+        pitch_type='custom',
+        pitch_length=length,
+        pitch_width=width,
+        line_color='#c7d5cc',   # Helles Grau für Linien
+        pitch_color='#22312b',  # Dunkles Grün (Hintergrund)
+        linewidth=2,
+        goal_type='box'         # Tore als Kasten zeichnen
+    )
 
+    # Figure erstellen
+    fig, ax = pitch.draw(figsize=(10, 6))
+    
+    # --- WICHTIG: Hintergrund dunkel machen (für weiße Schrift) ---
+    fig.set_facecolor('#22312b')
+
+    # --- WICHTIG: Achse invertieren (0=Oben) ---
+    ax.invert_yaxis()
+
+    # Daten trennen
     t1_shots = [s for s in shots if s["team"] == 1]
     t2_shots = [s for s in shots if s["team"] == 2]
     
+    # Farben (Konsistent zu Pass-Maps)
+    c1 = '#00bfff' # Cyan (Heim)
+    c2 = '#dc143c' # Crimson (Gast)
+
     def draw_team_shots(shot_list, color, label):
         if not shot_list: return
         
         on_target = [s for s in shot_list if s["on_target"]]
         off_target = [s for s in shot_list if not s["on_target"]]
         
-        # Treffer
+        # A) TREFFER (Aufs Tor)
+        # Wir zeichnen einen Pfeil (Flugbahn) und einen soliden Kreis am Abschusspunkt
         if on_target:
-            x = [s["start_x"] for s in on_target]
-            y = [s["start_y"] for s in on_target]
-            ax.scatter(x, y, c=color, marker='o', s=120, edgecolors='white', linewidth=2, label=f"{label} (aufs Tor)", zorder=3)
-            for s in on_target:
-                ax.arrow(s["start_x"], s["start_y"], s["end_x"]-s["start_x"], s["end_y"]-s["start_y"], 
-                         color=color, alpha=0.5, width=0.15, head_width=0.0, length_includes_head=True, zorder=2)
+            pitch.arrows(
+                [s["start_x"] for s in on_target], [s["start_y"] for s in on_target],
+                [s["end_x"] for s in on_target], [s["end_y"] for s in on_target],
+                width=2, headwidth=3, headlength=3, 
+                color=color, ax=ax, label=f"{label} (Aufs Tor)", zorder=3
+            )
+            pitch.scatter(
+                [s["start_x"] for s in on_target], [s["start_y"] for s in on_target],
+                s=80, color=color, edgecolors='white', linewidth=1.5, ax=ax, zorder=4
+            )
         
-        # Daneben
+        # B) DANEBEN
+        # Wir zeichnen nur ein "X" am Abschusspunkt (ohne Pfeil, wirkt sauberer)
+        # oder einen transparenten Pfeil
         if off_target:
-            x = [s["start_x"] for s in off_target]
-            y = [s["start_y"] for s in off_target]
-            ax.scatter(x, y, c=color, marker='x', s=80, linewidth=2, label=f"{label} (daneben)", zorder=3)
-            for s in off_target:
-                 ax.plot([s["start_x"], s["end_x"]], [s["start_y"], s["end_y"]], 
-                         color=color, alpha=0.3, linestyle="--", linewidth=1, zorder=2)
+            pitch.scatter(
+                [s["start_x"] for s in off_target], [s["start_y"] for s in off_target],
+                marker='x', s=60, color=color, alpha=0.7, ax=ax, label=f"{label} (Daneben)", zorder=2
+            )
+            # Optional: Dünne gestrichelte Linie für Fehlschüsse
+            pitch.lines(
+                [s["start_x"] for s in off_target], [s["start_y"] for s in off_target],
+                [s["end_x"] for s in off_target], [s["end_y"] for s in off_target],
+                color=color, alpha=0.3, lw=1, ls='--', ax=ax, zorder=1
+            )
 
-    draw_team_shots(t1_shots, "blue", team1_name)
-    draw_team_shots(t2_shots, "red", team2_name)
+    # Zeichnen
+    draw_team_shots(t1_shots, c1, team1_name)
+    draw_team_shots(t2_shots, c2, team2_name)
     
-    ax.set_title(f"Shot Map\n{team1_name} vs {team2_name}")
-    ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.15), ncol=2)
-    ax.set_xlim(0, length)
-    ax.set_ylim(0, width)
-    ax.axis("off")
+    # Titel (Weiß auf Dunkel)
+    fig.text(0.5, 0.95, f"Schusskarte: {team1_name} vs {team2_name}", 
+             color='white', fontsize=18, fontweight='bold', 
+             ha='center', va='center')
+    
+    # Legende (Dark Mode)
+    legend = ax.legend(facecolor='#22312b', edgecolor='None', fontsize=9, loc='lower center', ncol=4, bbox_to_anchor=(0.5, -0.05))
+    for text in legend.get_texts():
+        text.set_color("white")
     
     plt.tight_layout()
     return fig

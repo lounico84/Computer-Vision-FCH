@@ -1,169 +1,127 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Tuple
-import cv2
+from matplotlib.colors import LinearSegmentedColormap
+from scipy.ndimage import gaussian_filter
+from mplsoccer import Pitch
 
-def compute_ball_heatmap(
-    df,
-    pitch_length: float,
-    pitch_width: float,
-    bins: Tuple[int, int] = (40, 24),
-):
+from config import Settings
+s = Settings()
+
+def plot_pro_heatmap(df, team_id, pitch_length, pitch_width, ax=None, team_name="", color_start="#22312b", color_end="white"):
     """
-    Berechnet eine 2D-Heatmap des Balles (in Meterkoordinaten).
-    Gibt (H, xedges, yedges) zurück.
+    Erstellt eine 'Smooth Heatmap' im Dark Mode für ein spezifisches Team.
     """
-    mask = df["ball_x_m"].notna() & df["ball_y_m"].notna()
+    mask = (df["team_ball_control"] == team_id) & df["ball_x_m"].notna() & df["ball_y_m"].notna()
     x = df.loc[mask, "ball_x_m"].to_numpy()
     y = df.loc[mask, "ball_y_m"].to_numpy()
 
-    H, xedges, yedges = np.histogram2d(
-        x,
-        y,
-        bins=bins,
-        range=[[0, pitch_length], [0, pitch_width]],
+    if len(x) == 0:
+        return
+
+    # Pitch Setup
+    pitch = Pitch(
+        pitch_type='custom',
+        pitch_length=pitch_length,
+        pitch_width=pitch_width,
+        line_color='#c7d5cc',
+        pitch_color='#22312b',
+        linewidth=2,
     )
-    return H, xedges, yedges
 
-
-def plot_ball_heatmap_on_pitch(
-    df,
-    pitch_img,
-    pitch_length: float,
-    pitch_width: float,
-    bins: Tuple[int, int] = (120, 72),
-    ax: plt.Axes | None = None,
-    cmap: str = "jet",
-):
     if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = pitch.draw(figsize=(10, 6))
+        fig.set_facecolor('#22312b')
+    else:
+        pitch.draw(ax=ax)
 
     ax.invert_yaxis()
 
-    # Hintergrund: sehr leicht sichtbar
-    ax.imshow(
-        pitch_img,
-        extent=[0, pitch_length, 0, pitch_width],
-        aspect="equal",
-        alpha=0.35,     # <--- reduziert Feld-Dominanz
+    # Statistik berechnen
+    bin_statistic = pitch.bin_statistic(x, y, statistic='count', bins=(25, 15))
+    heatmap_data = bin_statistic['statistic']
+
+    # Glätten
+    heatmap_smooth = gaussian_filter(heatmap_data, sigma=1.5)
+
+    # Colormap
+    cmap = LinearSegmentedColormap.from_list("team_cmap", [color_start, color_end], N=100)
+
+    # Maskieren
+    heatmap_smooth[heatmap_smooth < 0.5] = np.nan
+    
+    # --- FIX: Daten zurück ins Dictionary schreiben und DAS übergeben ---
+    bin_statistic['statistic'] = heatmap_smooth
+    pitch.heatmap(bin_statistic, ax=ax, cmap=cmap, edgecolors=None, alpha=0.9)
+
+    ax.set_title(f"{team_name} - Heatmap", color='white', fontsize=18, fontweight='bold', pad=15)
+
+
+def plot_team_ball_heatmaps_on_pitch(df, pitch_img, pitch_length, pitch_width):
+    """
+    Hauptfunktion: Erzeugt 2 Subplots (Links Team 1, Rechts Team 2).
+    """
+    team_cfg = getattr(s, "team_names", None)
+    t1_name = team_cfg.team1_name if team_cfg else "Team 1"
+    t2_name = team_cfg.team2_name if team_cfg else "Team 2"
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    fig.set_facecolor('#22312b')
+
+    # Team 1
+    plot_pro_heatmap(
+        df, team_id=1, 
+        pitch_length=pitch_length, pitch_width=pitch_width, 
+        ax=axes[0], team_name=t1_name,
+        color_start="#22312b", color_end="#00bfff"
     )
 
-    # Ballpositionen
+    # Team 2
+    plot_pro_heatmap(
+        df, team_id=2, 
+        pitch_length=pitch_length, pitch_width=pitch_width, 
+        ax=axes[1], team_name=t2_name,
+        color_start="#22312b", color_end="#ff4d4d"
+    )
+
+    plt.tight_layout()
+    return fig, axes
+
+
+# Kompatibilitäts-Funktionen
+def compute_ball_heatmap(*args, **kwargs): 
+    return None, None, None
+
+def plot_ball_heatmap_on_pitch(df, pitch_img, pitch_length, pitch_width, bins=None, ax=None, cmap="jet"):
+    """
+    Erstellt eine Gesamt-Heatmap (beide Teams) im Pro-Look.
+    """
+    pitch = Pitch(
+        pitch_type='custom', pitch_length=pitch_length, pitch_width=pitch_width,
+        line_color='#c7d5cc', pitch_color='#22312b', linewidth=2
+    )
+    
+    if ax is None:
+        fig, ax = pitch.draw(figsize=(10, 6))
+        fig.set_facecolor('#22312b')
+    else:
+        pitch.draw(ax=ax)
+        
+    ax.invert_yaxis()
+
     mask = df["ball_x_m"].notna() & df["ball_y_m"].notna()
     x = df.loc[mask, "ball_x_m"].to_numpy()
     y = df.loc[mask, "ball_y_m"].to_numpy()
 
-    # Histogramm mit hoher Auflösung
-    H, xedges, yedges = np.histogram2d(
-        x, y,
-        bins=bins,
-        range=[[0, pitch_length], [0, pitch_width]],
-    )
+    if len(x) > 0:
+        bin_statistic = pitch.bin_statistic(x, y, statistic='count', bins=(30, 20))
+        heatmap_smooth = gaussian_filter(bin_statistic['statistic'], sigma=1.5)
+        
+        cmap_gold = LinearSegmentedColormap.from_list("gold_cmap", ["#22312b", "#ffd700"], N=100)
+        heatmap_smooth[heatmap_smooth < 1] = np.nan
+        
+        # --- FIX: Auch hier das Dictionary übergeben ---
+        bin_statistic['statistic'] = heatmap_smooth
+        pitch.heatmap(bin_statistic, ax=ax, cmap=cmap_gold, alpha=0.9)
 
-    H = H.astype(np.float32)
-
-    # Gaussian Blur = weich/rund
-    H_blur = cv2.GaussianBlur(H, (0, 0), sigmaX=3.5, sigmaY=3.5)
-
-    # Perzentil-Normalisierung (viel besser als max-Norm)
-    hi = np.nanpercentile(H_blur, 98)
-    if hi > 0:
-        H_norm = np.clip(H_blur / hi, 0, 1)
-    else:
-        H_norm = H_blur
-
-    # Kleine Werte entfernen
-    H_norm[H_norm < 0.05] = 0.0
-
-    # Weiche Anzeige
-    ax.imshow(
-        H_norm.T,
-        extent=[0, pitch_length, 0, pitch_width],
-        origin="upper",
-        cmap=cmap,
-        interpolation="bilinear",
-        alpha=0.85,      # <--- Heatmap deutlich sichtbarer
-        vmin=0,
-        vmax=1,
-    )
-
-    ax.set_xlim(0, pitch_length)
-    ax.set_ylim(0, pitch_width)
-    ax.set_xlabel("Länge (m)")
-    ax.set_ylabel("Breite (m)")
-    ax.set_title("Ball-Heatmap")
-
+    ax.set_title("Gesamt Heatmap (Ball)", color='white', fontsize=18, fontweight='bold', pad=15)
     return ax
-
-
-def plot_team_ball_heatmaps_on_pitch(
-    df,
-    pitch_img,
-    pitch_length: float,
-    pitch_width: float,
-    bins: Tuple[int, int] = (90, 54),
-):
-    """
-    Glatte Heatmaps für Team 1 und Team 2 nebeneinander.
-    """
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
-
-    for team_id, ax in zip([1, 2], axes):
-
-        ax.invert_yaxis()
-
-        mask = (
-            df["ball_x_m"].notna()
-            & df["ball_y_m"].notna()
-            & (df["team_ball_control"] == team_id)
-        )
-        x = df.loc[mask, "ball_x_m"].to_numpy()
-        y = df.loc[mask, "ball_y_m"].to_numpy()
-
-        # Pitch
-        ax.imshow(
-            pitch_img,
-            extent=[0, pitch_length, 0, pitch_width],
-            aspect="equal",
-            alpha=1.0,
-        )
-
-        if len(x) > 0:
-            H, xedges, yedges = np.histogram2d(
-                x, y,
-                bins=bins,
-                range=[[0, pitch_length], [0, pitch_width]],
-            )
-
-            H = H.astype(np.float32)
-            H_blur = cv2.GaussianBlur(H, ksize=(0, 0), sigmaX=2.0, sigmaY=2.0)
-
-            max_val = np.max(H_blur)
-            if max_val > 0:
-                H_norm = H_blur / max_val
-            else:
-                H_norm = H_blur
-
-            H_norm[H_norm < 0.02] = 0.0
-
-            ax.imshow(
-                H_norm.T,
-                extent=[0, pitch_length, 0, pitch_width],
-                origin="upper",
-                cmap="jet",
-                alpha=0.65,
-                aspect="equal",
-                vmin=0,
-                vmax=1,
-                interpolation="bilinear",
-            )
-
-        ax.set_xlim(0, pitch_length)
-        ax.set_ylim(0, pitch_width)
-        ax.set_xlabel("Länge (m)")
-        ax.set_title(f"Team {team_id} – Ball-Heatmap")
-
-    axes[0].set_ylabel("Breite (m)")
-    fig.suptitle("Ball-Heatmaps nach Ballkontrolle-Team", fontsize=14)
-    fig.tight_layout()
-    return fig, axes
