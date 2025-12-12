@@ -1,163 +1,225 @@
-# project/Computer-Vision-FCH/analytics/zones.py
-
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Dict, List
+from matplotlib.colors import LinearSegmentedColormap
 from config import Settings
 
-settings = Settings()
+# Versuch mplsoccer zu importieren
+try:
+    from mplsoccer import Pitch
+except ImportError:
+    class Pitch:
+        def __init__(self, *args, **kwargs): pass
+        def draw(self, *args, **kwargs): return plt.subplots()
+        def bin_statistic(self, *args, **kwargs): return {}
+        def heatmap(self, *args, **kwargs): pass
 
+s = Settings()
 
-def _zone(x: float, pitch_length: float) -> str:
-    if x < pitch_length / 3:
-        return "Defensiv"
-    if x < 2 * pitch_length / 3:
-        return "Mittelfeld"
-    return "Offensiv"
-
-
-def compute_zone_percentages(df, pitch_length: float) -> Dict[str, List[float]]:
+def plot_zone_analysis(df, pitch_length, pitch_width, team1_name="Team 1", team2_name="Team 2"):
     """
-    Berechnet Zonen-Anteile (in %) für:
-      - Gesamt
-      - Team 1 (bei Ballkontrolle)
-      - Team 2
-    Gibt ein Dict mit Keys 'zones', 'total', 'team1', 'team2'.
+    Erstellt ein Dashboard mit 3 Analysen:
+    1. Angriffs-Seiten (Wo greifen sie an?)
+    2. Zone Control Map (Wer kontrolliert welchen Bereich?)
+    3. Ballbesitz-Verteilung pro Drittel (Wo hält sich das Team auf?)
+    
+    RICHTUNG: 
+    - Team 1 spielt von RECHTS nach LINKS (Ziel: x=0).
+    - Team 2 spielt von LINKS nach RECHTS (Ziel: x=100).
     """
-    mask = df["ball_x_m"].notna()
-    df_z = df.loc[mask].copy()
-    df_z["zone"] = df_z["ball_x_m"].apply(lambda x: _zone(x, pitch_length))
+    
+    # Setup Figure (3 Spalten)
+    fig, axes = plt.subplots(1, 3, figsize=(20, 6))
+    fig.set_facecolor('#22312b')
+    
+    # Pitch Instanz
+    pitch = Pitch(
+        pitch_type='custom', pitch_length=pitch_length, pitch_width=pitch_width,
+        line_color='#c7d5cc', pitch_color='#22312b', linewidth=2,
+    )
 
-    zones = ["Defensiv", "Mittelfeld", "Offensiv"]
+    # ---------------------------------------------------------
+    # 1. ANGRIFFS-SEITEN (Attack Sides)
+    # ---------------------------------------------------------
+    ax1 = axes[0]
+    ax1.set_facecolor('#22312b')
+    pitch.draw(ax=ax1)
+    ax1.invert_yaxis()
+    
+    # Filter für das jeweilige Angriffsdrittel
+    # Team 1 greift auf x=0 an -> Angriffsdrittel ist x < length/3
+    t1_att = df[(df["team_ball_control"] == 1) & (df["ball_x_m"] < pitch_length / 3)]
+    
+    # Team 2 greift auf x=100 an -> Angriffsdrittel ist x > length*2/3
+    t2_att = df[(df["team_ball_control"] == 2) & (df["ball_x_m"] > pitch_length * 2/3)]
+    
+    def get_flank_pct(data, team_direction):
+        if len(data) == 0: return [0, 0, 0]
+        
+        # Y-Achse: 0 ist OBEN, Width ist UNTEN.
+        # Zone Oben (y < W/3), Mitte, Zone Unten (y > 2W/3)
+        top = len(data[data["ball_y_m"] < pitch_width/3])
+        mid = len(data[(data["ball_y_m"] >= pitch_width/3) & (data["ball_y_m"] <= pitch_width*2/3)])
+        bot = len(data[data["ball_y_m"] > pitch_width*2/3])
+        total = top + mid + bot
+        
+        # Mapping auf Links/Rechts aus SPIELERSICHT
+        if team_direction == "R_to_L": # Team 1 (läuft nach links)
+            # Oben (y=0) ist RECHTS
+            # Unten (y=60) ist LINKS
+            # Return Order: [Links, Mitte, Rechts]
+            return [bot/total*100, mid/total*100, top/total*100]
+            
+        else: # "L_to_R" Team 2 (läuft nach rechts)
+            # Oben (y=0) ist LINKS
+            # Unten (y=60) ist RECHTS
+            return [top/total*100, mid/total*100, bot/total*100]
 
-    def zone_pct(sub):
-        counts = sub["zone"].value_counts(normalize=True)
-        return [counts.get(z, 0.0) * 100.0 for z in zones]
+    # Team 1: Rechts -> Links
+    pct1 = get_flank_pct(t1_att, "R_to_L")
+    # Team 2: Links -> Rechts
+    pct2 = get_flank_pct(t2_att, "L_to_R")
+    
+    # Balken zeichnen
+    # Wir nutzen fixierte Y-Positionen für "Links", "Mitte", "Rechts" (Text-Label)
+    # Aber wir zeichnen die Balken an der geometrisch richtigen Stelle im Plot
+    
+    # Team 1 (Blau): Greift nach Links an.
+    # Wir zeichnen die Balken auf der LINKEN Seite des Plots (x=10 startend)
+    # Linksaußen ist UNTEN im Plot (y groß)
+    # Rechtsaußen ist OBEN im Plot (y klein)
+    
+    # pct1 ist [Links, Mitte, Rechts]
+    # Zeichne "Links" Balken UNTEN
+    ax1.barh(pitch_width*5/6, pct1[0]/3, left=5, height=6, color='#00bfff', alpha=0.8) # Links (unten)
+    ax1.text(5 + pct1[0]/3 + 2, pitch_width*5/6, f"{int(pct1[0])}%", color='#00bfff', va='center', fontweight='bold')
+    
+    # Zeichne "Mitte" Balken MITTE
+    ax1.barh(pitch_width/2, pct1[1]/3, left=5, height=6, color='#00bfff', alpha=0.8)
+    ax1.text(5 + pct1[1]/3 + 2, pitch_width/2, f"{int(pct1[1])}%", color='#00bfff', va='center', fontweight='bold')
 
-    total_pct = zone_pct(df_z)
-    t1_pct = zone_pct(df_z[df_z["team_ball_control"] == 1])
-    t2_pct = zone_pct(df_z[df_z["team_ball_control"] == 2])
-
-    return {
-        "zones": zones,
-        "total": total_pct,
-        "team1": t1_pct,
-        "team2": t2_pct,
-    }
+    # Zeichne "Rechts" Balken OBEN
+    ax1.barh(pitch_width/6, pct1[2]/3, left=5, height=6, color='#00bfff', alpha=0.8) # Rechts (oben)
+    ax1.text(5 + pct1[2]/3 + 2, pitch_width/6, f"{int(pct1[2])}%", color='#00bfff', va='center', fontweight='bold')
 
 
-def plot_zone_summary(
-    df,
-    pitch_img,
-    pitch_length: float,
-    pitch_width: float,
-):
-    """
-    Erzeugt 3 nebeneinanderstehende Plots:
-      1) Tabelle der Zonenanteile
-      2) Balkendiagramm (Gesamt vs Team 1 vs Team 2)
-      3) Pitch mit Zonen und Prozentangaben
-    """
-    team_cfg = settings.team_names
-    stats = compute_zone_percentages(df, pitch_length)
-    zones = stats["zones"]
-    total_pct = stats["total"]
-    t1_pct = stats["team1"]
-    t2_pct = stats["team2"]
+    # Team 2 (Rot): Greift nach Rechts an.
+    # Wir zeichnen Balken auf der RECHTEN Seite (x=95 startend nach links wachsend)
+    # pct2 ist [Links, Mitte, Rechts]
+    
+    # Zeichne "Links" Balken OBEN (da für T2 Oben = Links ist)
+    ax1.barh(pitch_width/6, -pct2[0]/3, left=95, height=6, color='#dc143c', alpha=0.8)
+    ax1.text(95 - pct2[0]/3 - 8, pitch_width/6, f"{int(pct2[0])}%", color='#dc143c', va='center', fontweight='bold')
 
-    fig, axes = plt.subplots(1, 3, figsize=(22, 6))
+    # Zeichne "Mitte" Balken
+    ax1.barh(pitch_width/2, -pct2[1]/3, left=95, height=6, color='#dc143c', alpha=0.8)
+    ax1.text(95 - pct2[1]/3 - 8, pitch_width/2, f"{int(pct2[1])}%", color='#dc143c', va='center', fontweight='bold')
+    
+    # Zeichne "Rechts" Balken UNTEN (da für T2 Unten = Rechts ist)
+    ax1.barh(pitch_width*5/6, -pct2[2]/3, left=95, height=6, color='#dc143c', alpha=0.8)
+    ax1.text(95 - pct2[2]/3 - 8, pitch_width*5/6, f"{int(pct2[2])}%", color='#dc143c', va='center', fontweight='bold')
 
-    # 1) Tabelle
-    ax = axes[0]
-    ax.axis("off")
 
-    table_data = [
-        ["Zone", "Gesamt %", f"{team_cfg.team1_name} %", f"{team_cfg.team2_name} %"],
-        [zones[0], f"{total_pct[0]:.1f}", f"{t1_pct[0]:.1f}", f"{t2_pct[0]:.1f}"],
-        [zones[1], f"{total_pct[1]:.1f}", f"{t1_pct[1]:.1f}", f"{t2_pct[1]:.1f}"],
-        [zones[2], f"{total_pct[2]:.1f}", f"{t1_pct[2]:.1f}", f"{t2_pct[2]:.1f}"],
-    ]
+    ax1.set_title("Angriffs-Seiten (Letztes Drittel)", color='white', fontsize=14, fontweight='bold')
+    
+    # Pfeile für Spielrichtung
+    ax1.arrow(40, pitch_width/2, -10, 0, head_width=3, color='#00bfff', alpha=0.5) # T1 nach Links
+    ax1.arrow(60, pitch_width/2, 10, 0, head_width=3, color='#dc143c', alpha=0.5)  # T2 nach Rechts
 
-    table = ax.table(cellText=table_data, loc="center", cellLoc="center")
-    table.scale(1.2, 1.8)
-    ax.set_title("Zonen – Tabellenübersicht", fontsize=14)
 
-    # 2) Balkendiagramm
-    ax = axes[1]
-    x = np.arange(len(zones))
-    width = 0.25
+    # ---------------------------------------------------------
+    # 2. ZONE CONTROL MAP (Dominanz-Raster)
+    # ---------------------------------------------------------
+    ax2 = axes[1]
+    pitch.draw(ax=ax2)
+    ax2.invert_yaxis()
+    
+    x1 = df.loc[df["team_ball_control"]==1, "ball_x_m"].values
+    y1 = df.loc[df["team_ball_control"]==1, "ball_y_m"].values
+    x2 = df.loc[df["team_ball_control"]==2, "ball_x_m"].values
+    y2 = df.loc[df["team_ball_control"]==2, "ball_y_m"].values
+    
+    bin_x, bin_y = 6, 4
+    stats1 = pitch.bin_statistic(x1, y1, statistic='count', bins=(bin_x, bin_y))
+    stats2 = pitch.bin_statistic(x2, y2, statistic='count', bins=(bin_x, bin_y))
+    
+    count1 = stats1['statistic']
+    count2 = stats2['statistic']
+    total = count1 + count2
+    
+    with np.errstate(divide='ignore', invalid='ignore'):
+        dominance = (count1 - count2) / total
+    dominance[np.isnan(dominance)] = 0 
 
-    ax.bar(x - width, total_pct, width, label="Gesamt")
-    ax.bar(x, t1_pct, width, label=team_cfg.team1_name)
-    ax.bar(x + width, t2_pct, width, label=team_cfg.team2_name)
+    cmap_div = LinearSegmentedColormap.from_list("dom_cmap", ['#dc143c', '#444444', '#00bfff'], N=100)
+    stats1['statistic'] = dominance
+    pitch.heatmap(stats1, ax=ax2, cmap=cmap_div, vmin=-0.8, vmax=0.8, edgecolors='#22312b', alpha=0.9)
+    
+    ax2.set_title("Territorial-Kontrolle (Blau vs Rot)", color='white', fontsize=14, fontweight='bold')
 
-    ax.set_xticks(x, zones)
-    ax.set_ylabel("Anteil Ballzeit (%)")
-    ax.set_title("Zonenverteilung (Balkendiagramm)")
-    ax.grid(axis="y", alpha=0.3)
-    ax.legend()
 
-    # 3) Pitch mit Zonenwerten
-    ax = axes[2]
-    L = pitch_length
+    # ---------------------------------------------------------
+    # 3. BALLBESITZ PRO DRITTEL (Verteilung)
+    # ---------------------------------------------------------
+    ax3 = axes[2]
+    ax3.set_facecolor('#22312b')
+    
+    def get_zone_distribution(team_id):
+        sub = df[df["team_ball_control"] == team_id]
+        if len(sub) == 0: return [0, 0, 0]
+        
+        x = sub["ball_x_m"]
+        limit1 = pitch_length / 3
+        limit2 = 2 * pitch_length / 3
+        
+        if team_id == 1:
+            # Team 1 spielt RECHTS (100) -> LINKS (0)
+            # Defensive: x > 66.6
+            # Mitte: 33.3 < x < 66.6
+            # Angriff: x < 33.3
+            defs = len(x[x > limit2])
+            mids = len(x[(x >= limit1) & (x <= limit2)])
+            atts = len(x[x < limit1])
+        else:
+            # Team 2 spielt LINKS (0) -> RECHTS (100)
+            # Defensive: x < 33.3
+            # Mitte: 33.3 < x < 66.6
+            # Angriff: x > 66.6
+            defs = len(x[x < limit1])
+            mids = len(x[(x >= limit1) & (x <= limit2)])
+            atts = len(x[x > limit2])
+            
+        total_z = defs + mids + atts
+        if total_z == 0: return [0, 0, 0]
+        return [defs/total_z*100, mids/total_z*100, atts/total_z*100]
 
-    ax.imshow(pitch_img, extent=[0, L, 0, pitch_width], aspect="equal")
+    dist1 = get_zone_distribution(1)
+    dist2 = get_zone_distribution(2)
+    
+    # Plotten
+    labels = ["Defensive", "Mittelfeld", "Angriff"]
+    x = np.arange(len(labels))
+    width = 0.35
+    
+    rects1 = ax3.bar(x - width/2, dist1, width, label=team1_name, color='#00bfff', alpha=0.9)
+    rects2 = ax3.bar(x + width/2, dist2, width, label=team2_name, color='#dc143c', alpha=0.9)
+    
+    ax3.bar_label(rects1, fmt='%.0f%%', padding=3, color='white', fontweight='bold')
+    ax3.bar_label(rects2, fmt='%.0f%%', padding=3, color='white', fontweight='bold')
+    
+    ax3.set_title("Aufenthaltsorte (Eigene Perspektive)", color='white', fontsize=14, fontweight='bold')
+    ax3.set_ylabel("Anteil (%)", color='white')
+    ax3.set_xticks(x)
+    ax3.set_xticklabels(labels, color='white', fontsize=11)
+    ax3.set_ylim(0, 100) 
+    
+    ax3.spines['bottom'].set_color('white')
+    ax3.spines['left'].set_color('white')
+    ax3.spines['top'].set_visible(False)
+    ax3.spines['right'].set_visible(False)
+    ax3.tick_params(axis='y', colors='white')
+    
+    legend = ax3.legend(facecolor='#22312b', edgecolor='white')
+    for text in legend.get_texts(): text.set_color("white")
 
-    ax.axvline(L / 3, linestyle="--", color="white")
-    ax.axvline(2 * L / 3, linestyle="--", color="white")
-
-    for i, name in enumerate(zones):
-        x_center = (i + 0.5) * (L / 3)
-
-        ax.text(
-            x_center,
-            pitch_width * 0.65,
-            f"{name}",
-            ha="center",
-            va="center",
-            fontsize=11,
-            color="white",
-            bbox=dict(facecolor="black", alpha=0.5, boxstyle="round,pad=0.3"),
-        )
-
-        ax.text(
-            x_center,
-            pitch_width * 0.45,
-            f"Gesamt: {total_pct[i]:.1f}%",
-            ha="center",
-            va="center",
-            fontsize=10,
-            color="white",
-            bbox=dict(facecolor="black", alpha=0.4, boxstyle="round,pad=0.2"),
-        )
-
-        ax.text(
-            x_center,
-            pitch_width * 0.30,
-            f"{team_cfg.team1_name}: {t1_pct[i]:.1f}%",
-            ha="center",
-            va="center",
-            fontsize=10,
-            color="white",
-            bbox=dict(facecolor="blue", alpha=0.4, boxstyle="round,pad=0.2"),
-        )
-
-        ax.text(
-            x_center,
-            pitch_width * 0.17,
-            f"{team_cfg.team2_name}: {t2_pct[i]:.1f}%",
-            ha="center",
-            va="center",
-            fontsize=10,
-            color="white",
-            bbox=dict(facecolor="red", alpha=0.4, boxstyle="round,pad=0.2"),
-        )
-
-    ax.set_xlim(0, L)
-    ax.set_ylim(0, pitch_width)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_title("Zonenverteilung auf dem Feld")
-
-    fig.tight_layout()
-    return fig, axes
+    plt.tight_layout()
+    return fig
