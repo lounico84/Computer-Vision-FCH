@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import cv2
 import math
+from mplsoccer import Pitch
 
 from config import Settings
 s = Settings()
@@ -172,79 +173,90 @@ def plot_pass_map(
     pitch_width,
     out_path,
     pitch_image_path=None,
+    team_name=None # Neuer Parameter für direkten Namen
 ):
     """
-    Zeichnet eine Pass-Map für ein bestimmtes Team mit PFEILEN.
+    Zeichnet eine professionelle Pass-Map im 'Dark Mode' (TV-Style) mit mplsoccer.
     """
-
-    team_cfg = s.team_names
+    team_cfg = getattr(s, "team_names", None)
     
+    # 1. Namen & Farben bestimmen
     if team == 1:
-        current_team_name = team_cfg.team1_name if team_cfg else "Team 1"
+        # Prio 1: Übergebener Name -> Prio 2: Config -> Prio 3: Default
+        display_name = team_name if team_name else (team_cfg.team1_name if team_cfg else "Team 1")
+        team_color = '#00bfff' # Electric Blue
     else:
-        current_team_name = team_cfg.team2_name if team_cfg else "Team 2"
+        display_name = team_name if team_name else (team_cfg.team2_name if team_cfg else "Team 2")
+        team_color = '#dc143c' # Neon Red
 
+    # Daten filtern
     team_passes = [p for p in passes if p["team"] == team]
     completed = [p for p in team_passes if p["completed"]]
     failed = [p for p in team_passes if not p["completed"]]
 
-    fig, ax = plt.subplots(figsize=(10, 6)) # Etwas größer für bessere Sichtbarkeit
+    # 2. SETUP: Pitch im Dark-Mode
+    # pitch_type='custom' erlaubt eigene Maße (Meter)
+    pitch = Pitch(
+        pitch_type='custom',
+        pitch_length=pitch_length,
+        pitch_width=pitch_width,
+        line_color='#c7d5cc',   # Helles Grau für Linien
+        pitch_color='#22312b',  # Dunkles Grün (Hintergrund)
+        linewidth=2,
+    )
 
-    # Achsen
-    ax.set_xlim(0, pitch_length)
-    ax.set_ylim(0, pitch_width)
-    ax.set_aspect("equal")
+    # Figure erstellen
+    fig, ax = pitch.draw(figsize=(10, 6))
+    
+    # WICHTIG: Hintergrund der gesamten Grafik dunkel machen
+    # (Sonst ist der weiße Titel auf weißem Rand unsichtbar)
+    fig.set_facecolor('#22312b')
+
+    # WICHTIG: Achse drehen (0=Oben)
     ax.invert_yaxis()
 
-    # Hintergrund
-    if pitch_image_path is not None:
-        img = cv2.imread(pitch_image_path)
-        if img is None:
-            print(f"[pass_maps] Warnung: Pitch-Image nicht gefunden: {pitch_image_path}")
-        else:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            ax.imshow(img, extent=[0, pitch_length, pitch_width, 0], interpolation="bilinear")
-    else:
-        ax.plot([0, pitch_length, pitch_length, 0, 0], [0, 0, pitch_width, pitch_width, 0], color="black", linewidth=1)
+    # 3. Pässe zeichnen
+    # A) Erfolgreiche Pässe
+    if completed:
+        pitch.arrows(
+            [p["start_x"] for p in completed], [p["start_y"] for p in completed],
+            [p["end_x"] for p in completed], [p["end_y"] for p in completed],
+            width=2, headwidth=3, headlength=3, 
+            color=team_color, ax=ax, label="Angekommen", zorder=2
+        )
+        # Startpunkte als Nodes
+        pitch.scatter(
+            [p["start_x"] for p in completed], [p["start_y"] for p in completed],
+            s=45, color=team_color, edgecolors='white', linewidth=1, ax=ax, alpha=0.9, zorder=3
+        )
 
-    # --- PÄSSE ALS PFEILE ZEICHNEN ---
+    # B) Fehlpässe
+    if failed:
+        pitch.lines(
+            [p["start_x"] for p in failed], [p["start_y"] for p in failed],
+            [p["end_x"] for p in failed], [p["end_y"] for p in failed],
+            color='#ba4f45', alpha=0.6, lw=1.5, ls='--', ax=ax, label="Fehlpass", zorder=1
+        )
+        pitch.scatter(
+            [p["end_x"] for p in failed], [p["end_y"] for p in failed],
+            marker='x', s=40, color='#ba4f45', ax=ax, zorder=2
+        )
+
+    # 4. Titel setzen (mit fig.text, damit er sicher oben steht)
+    # y=0.96 ist knapp unter dem oberen Rand
+    fig.text(0.5, 0.96, f"{display_name} - Passnetzwerk", 
+             color='white', fontsize=20, fontweight='bold', 
+             ha='center', va='center')
     
-    # Helper Funktion für Pfeile
-    def draw_arrows(pass_list, color, alpha=0.8):
-        for p in pass_list:
-            ax.annotate(
-                "", 
-                xy=(p["end_x"], p["end_y"]),       # Pfeilspitze
-                xytext=(p["start_x"], p["start_y"]), # Startpunkt
-                arrowprops=dict(
-                    arrowstyle="->", 
-                    color=color, 
-                    lw=1.5,          # Linienstärke
-                    alpha=alpha,
-                    shrinkA=0,       # Kein Abstand am Start
-                    shrinkB=0        # Kein Abstand am Ende
-                )
-            )
-            # Optional: Punkt am Start, um Richtung klarer zu machen
-            ax.scatter(p["start_x"], p["start_y"], color=color, s=10, alpha=alpha)
+    # Legende
+    legend = ax.legend(facecolor='#22312b', edgecolor='None', fontsize=10, loc='lower left')
+    for text in legend.get_texts():
+        text.set_color("white")
 
-    # 1. Erfolgreiche Pässe (Blau)
-    draw_arrows(completed, color="blue")
-
-    # 2. Fehlpässe (Rot)
-    draw_arrows(failed, color="red")
-
-    # Titel und Labels
-    # Titel setzen (mit dem dynamischen Namen)
-    ax.set_title(f"Pass Map {current_team_name} (Blau=Erfolg, Rot=Fehlpass)")
-    ax.set_xlabel("Länge [m]")
-    ax.set_ylabel("Breite [m]")
-    
-    plt.tight_layout()
-    
+    # Speichern oder Anzeigen
     if out_path is not None:
-        fig.savefig(out_path, dpi=200, bbox_inches='tight')
-        print(f"Pass-Map für Team {team} gespeichert unter: {out_path}")
+        fig.savefig(out_path, dpi=200, bbox_inches='tight', facecolor='#22312b')
+        print(f"Pass-Map für {display_name} gespeichert unter: {out_path}")
         plt.close(fig)
     else:
         plt.show()
