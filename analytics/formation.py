@@ -2,15 +2,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from mplsoccer import Pitch
-from scipy.spatial import ConvexHull          # <--- NEU für die Hüllkurve
+from scipy.spatial import ConvexHull
 from matplotlib.patches import Polygon
 
 from config import Settings
 s = Settings()
 
-def plot_tactical_formation(df, pitch_img, length, width, team1_name, team2_name, n_clusters=10):
+def plot_tactical_formation(df, pitch_img, length, width, team1_name, team2_name, n_clusters=10, ax=None):
     """
     Erstellt eine Taktik-Tafel mit Durchschnittspositionen UND Raumaufteilung (Convex Hull).
+    Kann jetzt auch in Subplots (ax) zeichnen.
     """
     
     # 1. Datenvorbereitung
@@ -26,8 +27,13 @@ def plot_tactical_formation(df, pitch_img, length, width, team1_name, team2_name
         line_color='#c7d5cc', pitch_color='#22312b', linewidth=2,
     )
 
-    fig, ax = pitch.draw(figsize=(10, 6))
-    fig.set_facecolor('#22312b')
+    # Entweder neue Figure oder existierende Achse nutzen
+    if ax is None:
+        fig, ax = pitch.draw(figsize=(10, 6))
+        fig.set_facecolor('#22312b')
+    else:
+        pitch.draw(ax=ax)
+
     ax.invert_yaxis() # Oben ist Oben
 
     # --- HELPER FUNKTION ---
@@ -46,19 +52,17 @@ def plot_tactical_formation(df, pitch_img, length, width, team1_name, team2_name
         sorted_indices = np.argsort(centers[:, 0])
         if team_id == 2: sorted_indices = sorted_indices[::-1]
 
-        # --- NEU: CONVEX HULL (Das "Gummiband" um das Team) ---
+        # --- CONVEX HULL (Das "Gummiband" um das Team) ---
         if len(centers) > 2: # Braucht mind. 3 Punkte für eine Fläche
             hull = ConvexHull(centers)
-            # Eckpunkte des Polygons holen
             hull_points = centers[hull.vertices]
             
-            # Polygon zeichnen (Transparente Fläche)
             poly = Polygon(hull_points, closed=True, 
-                           facecolor=color, alpha=0.1, # Sehr zart gefüllt
-                           edgecolor=color, linewidth=2, linestyle='--') # Gestrichelter Rand
+                           facecolor=color, alpha=0.1, 
+                           edgecolor=color, linewidth=2, linestyle='--')
             ax.add_patch(poly)
 
-        # --- NEU: TEAM SCHWERPUNKT (Centroid) ---
+        # --- TEAM SCHWERPUNKT (Centroid) ---
         centroid_x = np.mean(centers[:, 0])
         centroid_y = np.mean(centers[:, 1])
         pitch.scatter(centroid_x, centroid_y, marker='X', s=100, color=color, 
@@ -79,12 +83,15 @@ def plot_tactical_formation(df, pitch_img, length, width, team1_name, team2_name
     plot_team_clusters(1, "#00bfff", team1_name, text_color="black") # Cyan
     plot_team_clusters(2, "#dc143c", team2_name, text_color="white") # Rot
 
-    # Titel
-    fig.text(0.5, 0.95, f"Taktische Formation & Raumaufteilung", 
-             color='white', fontsize=18, fontweight='bold', ha='center', va='center')
-    
-    # Untertitel mit Erklärung
-    fig.text(0.5, 0.90, f"{team1_name} vs {team2_name} | Gestrichelt: Abgedeckter Raum", 
-             color='#c7d5cc', fontsize=10, ha='center', va='center')
-
-    plt.show()
+    # Titel setzen (abhängig vom Modus)
+    if ax is None:
+        # Standalone Mode
+        fig.text(0.5, 0.95, f"Taktische Formation & Raumaufteilung", 
+                 color='white', fontsize=18, fontweight='bold', ha='center', va='center')
+        fig.text(0.5, 0.90, f"{team1_name} vs {team2_name} | Gestrichelt: Abgedeckter Raum", 
+                 color='#c7d5cc', fontsize=10, ha='center', va='center')
+        plt.show()
+        return fig
+    else:
+        # Subplot Mode
+        ax.set_title("Formation & Kompaktheit", color='white', fontsize=14, fontweight='bold')
