@@ -3,9 +3,11 @@ import numpy as np
 from config import Settings
 from player_ball_assigner import PlayerBallAssigner
 
-# Compute team ball possession over all frames
+
+# Compute a stable per-frame team possession signal using owner assignment plus temporal hysteresis
 def compute_team_ball_control(tracks, settings: Settings):
 
+    # Initialize the ball-to-player assigner and auto-tune distance thresholds from observed tracks
     player_assigner = PlayerBallAssigner()
     player_assigner.auto_calibrate_from_tracks(tracks, max_frames=600)
     ball_cfg = settings.ball_control
@@ -13,18 +15,17 @@ def compute_team_ball_control(tracks, settings: Settings):
     num_frames = len(tracks["players"])
     team_ball_control = []
 
-    # --- Team-Hysterese wie bisher ---
-    last_team = 0           # letzter sicherer Ballbesitz (Team 1 oder 2)
-    candidate_team = None   # potenziell neues Team
-    candidate_count = 0     # wie viele Frames hintereinander dieses neue Team
+    # Maintain team-level hysteresis to avoid flickering possession on close contests
+    last_team = 0           # last stable team in control (1/2), 0 = unknown
+    candidate_team = None   # potential new team in control
+    candidate_count = 0     # consecutive frames supporting the candidate team
 
-    # --- Besitzer-Hysterese ---
-    last_owner_id = None        # stabiler Besitzer (track_id)
-    owner_candidate_id = None   # Kandidat für neuen Besitzer
-    owner_candidate_count = 0   # wie viele Frames in Folge dieser Kandidat
+    # Maintain owner-level hysteresis to stabilize ball owner identity across noisy assignments
+    last_owner_id = None        # last stable owner track_id
+    owner_candidate_id = None   # potential new owner track_id
+    owner_candidate_count = 0   # consecutive frames supporting the candidate owner
 
-    # Wie lange darf der Ball "frei" sein, ohne dass wir die Teamkontrolle verlieren?
-    # z.B. 10 Frames bei 30 fps ≈ 0.33 Sekunden – typischer Flugpass/Chip
+    # Allow short "free ball" periods (e.g., aerial passes) without immediately dropping team control
     max_free_ball_frames = 10
     free_ball_counter = 0
 
@@ -33,18 +34,15 @@ def compute_team_ball_control(tracks, settings: Settings):
         goalkeepers = tracks["goalkeepers"][frame_idx]
         ball_dict = tracks["ball"][frame_idx]
 
-        # Default: kein Besitzer für diesen Frame
+        # Default ownership for this frame before assignment succeeds
         owner_id = -1
         owner_team = 0
 
-        # ==== Fall 1: Ball in diesem Frame gar nicht vorhanden ====
+        # Handle missing ball detections by treating the ball as temporarily free
         if 1 not in ball_dict:
-            # Ball ist nicht sichtbar -> wie "Ball frei"
             free_ball_counter += 1
 
-            # Besitzer-Info am Ball (zur Sicherheit auf -1 setzen)
-            # (Ball existiert hier ja gar nicht in ball_dict, daher kein write)
-            # Teamkontrolle: solange free_ball_counter klein ist, bleibt last_team
+            # Keep last known team control during short gaps; otherwise mark possession as unknown
             if last_team != 0 and free_ball_counter <= max_free_ball_frames:
                 team_ball_control.append(last_team)
             else:
@@ -52,27 +50,25 @@ def compute_team_ball_control(tracks, settings: Settings):
 
             continue
 
-        # Ab hier wissen wir: ball_dict[1] existiert
+        # Extract current ball bounding box for proximity-based owner assignment
         ball_bbox = ball_dict[1]["bbox"]
 
-        # Merge players and goalkeepers into one dictionary
-        # WICHTIG: keine Referees – die dürfen nie Besitzer sein
+        # Build eligible actors (players + goalkeepers) and explicitly exclude referees from ownership
         all_actors = {}
         all_actors.update(players)
         all_actors.update(goalkeepers)
 
-        # Roher Besitzer (nächster Spieler/Goalie zum Ball – bereits in Metern)
+        # Assign ball ownership to the closest eligible actor (distance computed in meters downstream)
         assigned_id = player_assigner.assign_ball_to_player(all_actors, ball_bbox)
 
-        # ==== Fall 2: gültiger Ball, aber kein passender Spieler ====
+        # Handle visible ball without a confident owner as a "free ball" period
         if assigned_id == -1:
-            # Ball ist sichtbar, aber keinem Spieler eindeutig zuordenbar -> Ball "frei"
             free_ball_counter += 1
 
             ball_dict[1]["owner_id"] = owner_id
             ball_dict[1]["owner_team"] = owner_team
 
-            # Teamkontrolle beibehalten, solange der Ball nur kurz frei ist
+            # Preserve last team control for short free-ball windows to reduce possession dropouts
             if last_team != 0 and free_ball_counter <= max_free_ball_frames:
                 team_ball_control.append(last_team)
             else:
@@ -80,28 +76,25 @@ def compute_team_ball_control(tracks, settings: Settings):
 
             continue
 
-        # Ab hier: ein Kandidat für Besitzer existiert -> Ball ist NICHT mehr frei
+        # Reset free-ball counter once an owner candidate is available
         free_ball_counter = 0
 
-        # ==== Besitzer-Hysterese: stabilen owner_id bestimmen ====
+        # Stabilize owner identity using hysteresis to avoid rapid switching on borderline distances
         if last_owner_id is None:
-            # Erster gültiger Besitzer
             last_owner_id = assigned_id
             owner_candidate_id = None
             owner_candidate_count = 0
         elif assigned_id == last_owner_id:
-            # gleicher Besitzer wie bisher -> Kandidat zurücksetzen
             owner_candidate_id = None
             owner_candidate_count = 0
         else:
-            # anderer Spieler als bisheriger Besitzer
             if owner_candidate_id == assigned_id:
                 owner_candidate_count += 1
             else:
                 owner_candidate_id = assigned_id
                 owner_candidate_count = 1
 
-            # Wechsel nur, wenn der Kandidat stabil genug ist
+            # Confirm owner change only after sustained evidence over multiple frames
             if owner_candidate_count >= ball_cfg.min_switch_frames:
                 last_owner_id = assigned_id
                 owner_candidate_id = None
@@ -109,7 +102,7 @@ def compute_team_ball_control(tracks, settings: Settings):
 
         owner_id = last_owner_id
 
-        # ==== Besitzer im aktuellen Frame verankern ====
+        # Resolve the owner's team and mark has_ball for downstream visualizations and analytics
         raw_team = 0
 
         if owner_id in players:
@@ -119,46 +112,40 @@ def compute_team_ball_control(tracks, settings: Settings):
             goalkeepers[owner_id]["has_ball"] = True
             raw_team = goalkeepers[owner_id].get("team", 0)
         else:
-            # stabiler Besitzer existiert, ist aber in diesem Frame nicht sichtbar
-            # -> Teamkontrolle bleibt wie bisher
+            # If the stable owner is not visible, keep team control stable to avoid spurious drops
             ball_dict[1]["owner_id"] = owner_id
             ball_dict[1]["owner_team"] = 0
 
-            # wenn wir schon ein last_team haben, behalten wir es
             team_ball_control.append(last_team)
             continue
 
         owner_team = raw_team
 
-        # Besitzer-Info am Ball speichern (für spätere Auswertungen / CSV)
+        # Persist owner metadata on the ball track for CSV export and later event detection
         ball_dict[1]["owner_id"] = owner_id
         ball_dict[1]["owner_team"] = owner_team
 
-        # ==== Team-Kontrolle bestimmen ====
+        # Fallback to last known team when team assignment is missing/invalid in this frame
         if raw_team not in (1, 2):
-            # kein valides Team erkannt
             team_ball_control.append(last_team if last_team != 0 else 0)
             continue
 
-        # Team-Hysterese wie bisher, aber robuster
+        # Stabilize team possession using hysteresis to prevent oscillation on quick challenges
         if last_team == 0:
-            # erstes Mal ein Team in Kontrolle
             last_team = raw_team
             candidate_team = None
             candidate_count = 0
         elif raw_team == last_team:
-            # gleiches Team wie bisher -> Kandidat zurücksetzen
             candidate_team = None
             candidate_count = 0
         else:
-            # mögliches neues Team
             if candidate_team == raw_team:
                 candidate_count += 1
             else:
                 candidate_team = raw_team
                 candidate_count = 1
 
-            # nur wenn neuer Kandidat stabil genug ist -> Teamwechsel
+            # Confirm team change only after sustained evidence over multiple frames
             if candidate_count >= ball_cfg.min_switch_frames:
                 last_team = raw_team
                 candidate_team = None
@@ -166,4 +153,5 @@ def compute_team_ball_control(tracks, settings: Settings):
 
         team_ball_control.append(last_team)
 
+    # Return possession as a compact NumPy array for downstream smoothing and visualization
     return np.array(team_ball_control)
