@@ -1,51 +1,54 @@
 import numpy as np
 import pandas as pd
-
 from utils import get_center_of_bbox, pixel_to_pitch, is_homography_available
 from config import Settings
+
+# Load global analytics configuration
 settings = Settings()
 analytics_cfg = settings.analytics
 
-# Export a csv where each row represents one video frame
+# Export a CSV where each row represents one video frame
 def export_frame_csv1(tracks, team_ball_control, fps, output_path):
 
+    # Determine total number of frames based on player tracking
     num_frames = len(tracks["players"])
     rows = []
 
+    # Check whether pixel-to-world transformation is available
     use_world = is_homography_available()
     if use_world:
         print("[csv_exporter] Homographie verfügbar – Ballkoordinaten in Meter werden exportiert.")
     else:
         print("[csv_exporter] Keine Homographie – Ballkoordinaten bleiben nur in Pixeln.")
 
-    # Für Geschwindigkeitsberechnung
+    # Cache previous ball position and timestamp for speed computation
     last_ball_x_m = np.nan
     last_ball_y_m = np.nan
     last_time_sec = np.nan
 
     for frame_idx in range(num_frames):
+        # Extract tracked objects for the current frame
         players = tracks["players"][frame_idx]
         gks     = tracks["goalkeepers"][frame_idx]
         ball    = tracks["ball"][frame_idx]
 
-        # Convert frame indey into time in seconds
+        # Convert frame index to timestamp in seconds
         time_sec = frame_idx / float(fps)
 
-        # Check if ball is detected in the current frame
+        # Determine ball visibility and compute pixel center if detected
         if 1 in ball:
             ball_visible = 1
             ball_bbox = ball[1]["bbox"]
-            # Pixel-Zentrum des Balls
             ball_x, ball_y = get_center_of_bbox(ball_bbox)
         else:
             ball_visible = 0
             ball_x, ball_y = np.nan, np.nan
 
-        # Weltkoordinaten in Metern
+        # Transform ball position to world coordinates if calibration is available
         if ball_visible and use_world:
             ball_x_m, ball_y_m = pixel_to_pitch(ball_x, ball_y)
 
-            # 1) Falls Ball weit ausserhalb des Spielfeldes -> invalid
+            # Invalidate positions clearly outside pitch boundaries
             if (
                 ball_x_m < -analytics_cfg.pitch_margin
                 or ball_x_m > analytics_cfg.pitch_length + analytics_cfg.pitch_margin
@@ -57,7 +60,7 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
         else:
             ball_x_m, ball_y_m = np.nan, np.nan
 
-        # Ball-Geschwindigkeit in m/s (auf Basis der Meter-Koordinaten)
+        # Compute ball speed in m/s using consecutive world positions
         if (
             ball_visible
             and use_world
@@ -70,7 +73,7 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
                 dy = ball_y_m - last_ball_y_m
                 speed = (dx * dx + dy * dy) ** 0.5 / dt
 
-                # 2) Unplausible High-Speed als NaN markieren
+                # Filter out physically implausible speed values
                 if speed > analytics_cfg.max_ball_speed:
                     ball_speed_m_s = np.nan
                 else:
@@ -80,18 +83,18 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
         else:
             ball_speed_m_s = np.nan
 
-        # Cache für nächsten Frame aktualisieren
+        # Update cached values for next-frame speed estimation
         if ball_visible and use_world:
             last_ball_x_m = ball_x_m
             last_ball_y_m = ball_y_m
             last_time_sec = time_sec
 
-        # Default values if no owner is found
+        # Initialize default ball ownership metadata
         owner_id = -1
         owner_role = "none"
         owner_team = 0
 
-        # First check if any field player has the ball
+        # Identify ball owner among field players
         for pid, pdata in players.items():
             if pdata.get("has_ball", False):
                 owner_id = pid
@@ -99,7 +102,7 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
                 owner_team = pdata.get("team", 0)
                 break
 
-        # If no player owns the ball, check goalkeepers
+        # Fallback to goalkeeper ownership if no player owns the ball
         if owner_id == -1:
             for gid, gdata in gks.items():
                 if gdata.get("has_ball", False):
@@ -108,17 +111,17 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
                     owner_team = gdata.get("team", 0)
                     break
 
-        # Use smoothed ball control value for this frame
+        # Retrieve smoothed team ball control value for the frame
         if frame_idx < len(team_ball_control):
             team_control = int(team_ball_control[frame_idx])
         else:
-            team_control = 0 # safety fallback
+            team_control = 0  # Safety fallback for out-of-range access
 
-        # Count how many players per team are visible in this frame
+        # Count visible players per team in the current frame
         team1_players = sum(1 for p in players.values() if p.get("team") == 1)
         team2_players = sum(1 for p in players.values() if p.get("team") == 2)
 
-        # Collect all values into a structured row
+        # Aggregate all per-frame metrics into a single record
         rows.append(
             {
                 "frame": frame_idx,
@@ -127,7 +130,7 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
                 "ball_x": ball_x,
                 "ball_y": ball_y,
                 "ball_x_m": ball_x_m,
-                "ball_y_m": ball_y_m,           
+                "ball_y_m": ball_y_m,
                 "ball_speed_m_s": ball_speed_m_s,
                 "ball_owner_id": owner_id,
                 "ball_owner_role": owner_role,
@@ -138,7 +141,7 @@ def export_frame_csv1(tracks, team_ball_control, fps, output_path):
             }
         )
 
-    # Convert list of dicts to a dataframe and save to disk
+    # Persist the aggregated frame-level data as a CSV file
     df = pd.DataFrame(rows)
     df.to_csv(output_path, index=False)
     print(f"Saved data to: {output_path}")
