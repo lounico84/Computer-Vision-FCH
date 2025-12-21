@@ -6,32 +6,26 @@ import os
 import pathlib as Path
 from config import Settings
 
-# Einstellungen laden
+# Load project settings to centralize analytics parameters and file paths
 s = Settings()
 analytics_cfg = s.analytics
 
-# ===========================================
-#  PFADE (aus config.py)
-# ===========================================
-VIDEO_FILE     = str(s.paths.input_video)           # Das Match-Video
-PITCH_IMG_PATH = str(s.paths.pitch_image)           # Das 2D-Spielfeld-Bild
-CALIB_FILE     = str(s.paths.calib_file)            # Die zentrale GoPro-Entzerrung
-H_PIXEL_FILE   = str(s.paths.homography_npy)        # Zwischenspeicher (Pixel-Homographie)
-H_METER_FILE   = str(s.paths.homography_npz)        # FINAL: Meter-Homographie für die Pipeline
-WARP_OUT       = str(s.paths.warped_frame_output)   # Debug-Bild
+# Define key inputs/outputs from config to keep calibration workflow reproducible
+VIDEO_FILE     = str(s.paths.input_video)           # Match video input
+PITCH_IMG_PATH = str(s.paths.pitch_image)           # 2D pitch reference image
+CALIB_FILE     = str(s.paths.calib_file)            # Shared GoPro undistortion parameters
+H_PIXEL_FILE   = str(s.paths.homography_npy)        # Intermediate pixel-space homography
+H_METER_FILE   = str(s.paths.homography_npz)        # Final metric homography used by the pipeline
+WARP_OUT       = str(s.paths.warped_frame_output)   # Debug warp output for visual QA
 
-# Echte Feldgröße aus Config (für die Meter-Umrechnung)
+# Cache real-world pitch dimensions (meters) for pixel-to-metric conversion
 FIELD_LENGTH_M = analytics_cfg.pitch_length
 FIELD_WIDTH_M  = analytics_cfg.pitch_width
 
-# ===========================================
-#  HILFSFUNKTION: Pixel -> Meter Konvertierung
-# ===========================================
+
+# Convert a pixel-space homography (camera -> pitch image) into a meter-space homography (camera -> real pitch)
 def export_homography_to_meters(H_pixel, pitch_img_path, out_npz_path):
-    """
-    Nimmt die geklickte Pixel-Homographie, berechnet die Skalierung auf Meter
-    basierend auf der Bildgröße des Pitch-Images und der echten Feldgröße.
-    """
+    # Load pitch image to derive scaling factors between pitch pixels and real meters
     img = cv2.imread(pitch_img_path)
     if img is None:
         raise FileNotFoundError(f"Pitch-Bild nicht gefunden: {pitch_img_path}")
@@ -40,31 +34,31 @@ def export_homography_to_meters(H_pixel, pitch_img_path, out_npz_path):
     print(f"\n[Export] Pitch-Bildgröße: {w_img} x {h_img} px")
     print(f"[Export] Reale Feldgröße: {FIELD_LENGTH_M} x {FIELD_WIDTH_M} m")
 
-    # Skalierungs-Matrix S: Transformiert Pitch-Pixel in echte Meter
-    # Formel: x_meter = (x_pixel / bild_breite) * feld_länge
+    # Build a scale matrix mapping pitch-image pixels to metric pitch coordinates
     S = np.array([
         [FIELD_LENGTH_M / w_img, 0.0,                     0.0],
         [0.0,                    FIELD_WIDTH_M / h_img,   0.0],
         [0.0,                    0.0,                     1.0]
     ], dtype=np.float32)
 
-    # Die finale Homographie (Kamera -> Meter) ist S * H_pixel
+    # Compose final homography in meters to align downstream analytics with real units
     H_meter = S @ H_pixel
     
-    # Inverse berechnen (Meter -> Kamera)
+    # Compute inverse mapping for optional back-projection and diagnostics
     try:
         H_inv_meter = np.linalg.inv(H_meter)
     except np.linalg.LinAlgError:
-        print("[ERROR] Homographie ist singulär und nicht invertierbar!")
+        print("[ERROR] Homography is singular and cannot be inverted.")
         return
 
-    # Speichern für die Pipeline
+    # Persist both forward and inverse transforms for pipeline consumption
     np.savez(out_npz_path, H=H_meter, H_inv=H_inv_meter)
     
     print(f"[Export] SUCCESS! Meter-Homographie gespeichert in: {out_npz_path}")
     print("H_meter Matrix:\n", H_meter)
 
 
+# Read a single representative video frame to use for manual calibration and homography selection
 def get_first_frame(video_path):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -75,13 +69,12 @@ def get_first_frame(video_path):
         raise RuntimeError("Konnte keinen Frame aus dem Video lesen.")
     return frame
 
-# ===========================================
-#  STEP 1: GoPro Entzerrung (Laden oder Erstellen)
-# ===========================================
+
+# Undistort the camera frame using stored calibration, or provide a manual slider-based fallback
 def step1_gopro_calibration(frame):
     print("\n--- STEP 1: Linsen-Entzerrung ---")
     
-    # Prüfen, ob die zentrale Kalibrierungsdatei existiert
+    # Reuse existing calibration when available to keep per-match setup minimal
     if os.path.exists(CALIB_FILE):
         print(f"[INFO] Zentrale Kalibrierung gefunden: {CALIB_FILE}")
         try:
@@ -89,7 +82,7 @@ def step1_gopro_calibration(frame):
             K = data['K']
             dist = data['dist']
             
-            # Kurzer Check auf Nullen
+            # Detect invalid placeholder calibration and force manual setup when needed
             if np.all(dist == 0):
                 print("[WARNUNG] Datei enthält nur Nullen! Starte manuelle Kalibrierung...")
             else:
@@ -99,11 +92,11 @@ def step1_gopro_calibration(frame):
         except Exception as e:
             print(f"[ERROR] Fehler beim Laden: {e}. Starte manuelle Kalibrierung...")
 
-    # Falls nicht vorhanden oder fehlerhaft -> Manuell erstellen
+    # Provide an interactive calibration path to tune distortion parameters on-the-fly
     print("-> Starte manuelle Kalibrierung (Slider)...")
     h, w = frame.shape[:2]
     
-    # Initiale Matrix
+    # Initialize intrinsics from an assumed GoPro field-of-view to stabilize slider tuning
     fov_deg = 120.0
     fov_rad = math.radians(fov_deg)
     fx = (w / 2.0) / math.tan(fov_rad / 2.0)
@@ -114,13 +107,13 @@ def step1_gopro_calibration(frame):
 
     cv2.namedWindow('UNDISTORT (Druecke S zum Speichern)', cv2.WINDOW_NORMAL)
 
+    # Update preview on slider movement to visually converge towards straight lines
     def update(_=None):
         k1 = (cv2.getTrackbarPos('k1', 'UNDISTORT (Druecke S zum Speichern)') - 100) / 100.0
         k2 = (cv2.getTrackbarPos('k2', 'UNDISTORT (Druecke S zum Speichern)') - 100) / 100.0
         dist = np.array([k1, k2, 0, 0, 0], dtype=np.float32)
         vis = cv2.undistort(frame, K, dist)
         
-        # Info-Text
         cv2.putText(vis, f"k1={k1:.2f}, k2={k2:.2f}", (20, 40), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         cv2.imshow('UNDISTORT (Druecke S zum Speichern)', vis)
@@ -132,25 +125,24 @@ def step1_gopro_calibration(frame):
     print("Stelle die Slider ein, bis Linien gerade sind.")
     print("Drücke 's', um zu speichern und fortzufahren.")
     
+    # Block until the user confirms the calibration snapshot
     while True:
         if cv2.waitKey(20) & 0xFF == ord('s'):
             break
     cv2.destroyAllWindows()
 
-    # Werte auslesen
+    # Persist selected distortion coefficients to reuse across matches with the same camera setup
     k1 = (cv2.getTrackbarPos('k1', 'UNDISTORT (Druecke S zum Speichern)') - 100) / 100.0
     k2 = (cv2.getTrackbarPos('k2', 'UNDISTORT (Druecke S zum Speichern)') - 100) / 100.0
     dist = np.array([k1, k2, 0, 0, 0], dtype=np.float32)
     
-    # Speichern
     np.savez(CALIB_FILE, K=K, dist=dist)
     print(f"Kalibrierung gespeichert unter: {CALIB_FILE}")
     
     return K, dist, cv2.undistort(frame, K, dist)
 
-# ===========================================
-#  STEP 2: Homographie (Punkte klicken)
-# ===========================================
+
+# Collect corresponding points (camera frame vs pitch image) and compute a camera->pitch homography
 def step2_homography(cam_img_undist, pitch_img):
     print("\n--- STEP 2: Homographie (Punkte klicken) ---")
     print("1. Klicke Punkt im VIDEO (z.B. Eckfahne)")
@@ -162,6 +154,7 @@ def step2_homography(cam_img_undist, pitch_img):
     cam_pts = []
     map_pts = []
 
+    # Capture camera-frame points for homography estimation with visual numbering feedback
     def cam_cb(event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
             cam_pts.append((x, y))
@@ -169,6 +162,7 @@ def step2_homography(cam_img_undist, pitch_img):
             cv2.putText(cam_display, str(len(cam_pts)), (x+5, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
             cv2.imshow("CAMERA", cam_display)
 
+    # Capture pitch-image points for homography estimation with visual numbering feedback
     def map_cb(event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
             map_pts.append((x, y))
@@ -176,6 +170,7 @@ def step2_homography(cam_img_undist, pitch_img):
             cv2.putText(map_display, str(len(map_pts)), (x+5, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
             cv2.imshow("MAP", map_display)
 
+    # Create interactive windows to collect point pairs from both coordinate systems
     cv2.namedWindow("CAMERA", cv2.WINDOW_NORMAL)
     cv2.setMouseCallback("CAMERA", cam_cb)
     cv2.imshow("CAMERA", cam_display)
@@ -184,23 +179,25 @@ def step2_homography(cam_img_undist, pitch_img):
     cv2.setMouseCallback("MAP", map_cb)
     cv2.imshow("MAP", map_display)
 
+    # Wait for user confirmation (space) to compute homography from collected correspondences
     while True:
-        if cv2.waitKey(20) & 0xFF == 32: # Space Taste
+        if cv2.waitKey(20) & 0xFF == 32:
             break
     cv2.destroyAllWindows()
 
+    # Validate minimum correspondence count and one-to-one matching before estimation
     if len(cam_pts) < 4:
         raise ValueError("Zu wenige Punkte! Mindestens 4 notwendig.")
     if len(cam_pts) != len(map_pts):
         raise ValueError(f"Ungleiche Anzahl Punkte! Video: {len(cam_pts)}, Map: {len(map_pts)}")
 
-    # Homographie berechnen (Pixel -> Pixel)
+    # Estimate pixel-space homography (camera pixels -> pitch-image pixels)
     H, _ = cv2.findHomography(np.array(cam_pts), np.array(map_pts))
     
-    # Speichern der RAW-Matrix (optional, falls man später manuell umrechnen will)
+    # Persist the pixel-space homography for debugging and repeatability
     np.save(H_PIXEL_FILE, H)
     
-    # Warp Check (Visuelle Prüfung)
+    # Generate a warp preview to visually QA alignment before exporting meter-space transforms
     h_map, w_map = pitch_img.shape[:2]
     warped = cv2.warpPerspective(cam_img_undist, H, (w_map, h_map))
     cv2.imwrite(WARP_OUT, warped)
@@ -208,24 +205,22 @@ def step2_homography(cam_img_undist, pitch_img):
     
     return H
 
-# ===========================================
-#  MAIN
-# ===========================================
+
+# Run the end-to-end calibration pipeline: undistort, click correspondences, export meter homography for production
 def main():
-    # 1. Daten laden
+    # Load reference assets (frame + pitch image) to support calibration and QA
     frame = get_first_frame(VIDEO_FILE)
     pitch_img = cv2.imread(PITCH_IMG_PATH)
     if pitch_img is None:
         raise FileNotFoundError(f"Pitch-Bild fehlt: {PITCH_IMG_PATH}")
 
-    # 2. Schritt 1: Entzerrung (automatisch laden, wenn vorhanden)
+    # Step 1: undistort using stored calibration when available (otherwise manual tuning)
     K, dist, cam_undist = step1_gopro_calibration(frame)
 
-    # 3. Schritt 2: Punkte klicken (Pixel -> MapPixel)
-    # Hier musst du für jedes Match NEU klicken!
+    # Step 2: collect point pairs and compute camera->pitch pixel-space homography
     H_pixel = step2_homography(cam_undist, pitch_img)
 
-    # 4. Schritt 3: Automatisch in METER umrechnen und speichern
+    # Step 3: convert and persist a meter-space homography for downstream analytics modules
     print("\n--- STEP 3: Exportiere in Meter... ---")
     export_homography_to_meters(H_pixel, PITCH_IMG_PATH, H_METER_FILE)
 
@@ -236,5 +231,7 @@ def main():
     print("-----------------------------------------------------------")
     print("Du kannst jetzt main.py starten (stelle sicher, dass read_tracks_from_stub=False ist).")
 
+
+# Execute calibration only when run as a script to keep the module import-safe for pipelines
 if __name__ == "__main__":
     main()
