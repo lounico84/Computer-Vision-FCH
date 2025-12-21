@@ -13,8 +13,8 @@ class PathConfig:
     input_video: Path = "input_videos_match/Test/kuesnacht_test_clip5.mp4"
 
     # Output
-    output_video: Path = "output_video_match/output_video_e.avi"
-    color_debug_image: Path = "output_video_match/color_debug_e.png"
+    output_video: Path = "output_video_match/output_video_k_5_2.avi"
+    color_debug_image: Path = "output_video_match/color_debug_k_5_2.png"
 
     # Stubs
     tracks_stub: Path = PROJECT_ROOT / "stubs/track_stubs_k_5_1.pkl"
@@ -33,7 +33,7 @@ class PathConfig:
     warped_frame_output: Path = PROJECT_ROOT / "calibration/pictures/aio_warped_frame_to_pitch_e_1.png"
 
     report_notebook: Path = PROJECT_ROOT / "match_analytics.ipynb"
-    report_pdf: Path = PROJECT_ROOT / "analytics/match_analytics.pdf"
+    report_pdf: Path = PROJECT_ROOT / "analytics/match_analytics_kuesnacht.pdf"
 
 @dataclass
 class TeamNamesConfig:
@@ -46,8 +46,8 @@ class TrackingConfig:
     fps: int = 30
     read_tracks_from_stub: bool = True      # read current yolo predictions and don't predict again
     resume_track_from_stub: bool = True     # continue with frames for training
-    read_team_from_stub: bool =  False    # read current k-means team assignments
-    resume_team_from_stub: bool = False      # continue with frames for training
+    read_team_from_stub: bool =  True    # read current k-means team assignments
+    resume_team_from_stub: bool = True      # continue with frames for training
     max_ball_interpolation_gap: int = 20
     frame_skip: int = 2
 
