@@ -93,11 +93,11 @@ Typische Module im Repository:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-
+```
 ### 2. Abhängigkeiten installieren
 ```bash
 pip install -r requirements.txt
-
+```
 ## 3. Konfiguration prüfen
 
 - `config.py` öffnen und sicherstellen, dass folgende Pfade korrekt gesetzt sind:
