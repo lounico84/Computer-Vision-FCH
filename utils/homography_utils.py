@@ -6,7 +6,7 @@ from config import Settings
 
 s = Settings()
 
-# Pfad relativ zum Projekt-Root ermitteln
+# Resolve and store the configured homography (.npz) path for later lazy loading
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 CALIBRATION_FILE = os.path.join(s.paths.homography_npz)
@@ -16,40 +16,31 @@ _H_inv = None
 _loaded = False
 
 
+# Lazily load the homography matrices (H and H_inv) from disk on first access
 def _load_homography():
-    """
-    Lädt H und H_inv aus der NPZ-Datei (lazy, nur beim ersten Zugriff).
-    """
     global _H, _H_inv, _loaded
     if _loaded:
         return
 
     _loaded = True
     if not os.path.exists(CALIBRATION_FILE):
-        print(f"[homography_utils] Keine Kalibrierdatei gefunden unter {CALIBRATION_FILE}")
+        print(f"[homography_utils] No calibration file found at {CALIBRATION_FILE}")
         return
 
     data = np.load(CALIBRATION_FILE)
     _H = data["H"]
     _H_inv = data.get("H_inv", None)
-    print(f"[homography_utils] Homographie geladen aus {CALIBRATION_FILE}")
+    print(f"[homography_utils] Homography loaded from {CALIBRATION_FILE}")
 
 
+# Check whether a valid homography matrix could be loaded successfully
 def is_homography_available() -> bool:
-    """
-    True, wenn eine gültige Homographie geladen werden konnte.
-    """
     _load_homography()
     return _H is not None
 
 
+# Convert camera image pixel coordinates into pitch coordinates in meters using H
 def pixel_to_pitch(x: float, y: float):
-    """
-    Transformiert einen Bildpunkt (Pixel) in Spielfeld-Koordinaten (Meter).
-
-    Rückgabe: (X, Y) in Metern
-    Falls keine Homographie vorhanden ist: (np.nan, np.nan)
-    """
     _load_homography()
     if _H is None:
         return np.nan, np.nan
@@ -61,13 +52,8 @@ def pixel_to_pitch(x: float, y: float):
     return X, Y
 
 
+# Convert pitch coordinates in meters back into camera image pixel coordinates using H_inv
 def pitch_to_pixel(X: float, Y: float):
-    """
-    Transformiert einen Spielfeldpunkt (Meter) in Bildkoordinaten (Pixel).
-
-    Rückgabe: (x, y) in Pixel
-    Falls keine Homographie vorhanden ist: (np.nan, np.nan)
-    """
     _load_homography()
     if _H_inv is None:
         return np.nan, np.nan
