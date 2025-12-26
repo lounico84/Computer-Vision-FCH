@@ -42,7 +42,7 @@ Das System erkennt und verfolgt Spieler, Torhüter, Schiedsrichter und den Ball,
 
 ---
 
-## Projektstruktur (High-Level)
+## Projektstruktur
 
 Typische Module im Repository:
 
@@ -109,7 +109,7 @@ pip install -r requirements.txt
 
 ---
 
-## Kalibrierung (Pflicht für Meter-basierte Analysen)
+## Kalibrierung
 
 Die Pipeline unterstützt zwei Modi:
 - **Pixel-Modus**: funktioniert ohne Homographie, eingeschränkte Analysen
