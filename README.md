@@ -94,17 +94,11 @@ Typische Module im Repository:
 python -m venv .venv
 source .venv/bin/activate
 ```
-<<<<<<< HEAD
-=======
 
->>>>>>> 2f35610 (update)
 ### 2. Abhängigkeiten installieren
 ```bash
 pip install -r requirements.txt
 ```
-<<<<<<< HEAD
-## 3. Konfiguration prüfen
-=======
 
 ### 3. Konfiguration prüfen
 >>>>>>> 2f35610 (update)
