@@ -1,4 +1,4 @@
-# Football Match Analytics (Computer Vision)
+# Computer Vision Fussballanalyse
 
 End-to-End Computer-Vision-Pipeline zur Analyse von Fussballspielen auf Amateur- und semiprofessionellem Niveau.  
 Das System erkennt und verfolgt Spieler, Torhüter, Schiedsrichter und den Ball, weist Teams anhand der Trikotfarben zu, projiziert Kamerapixel mittels Homographie in Spielfeldkoordinaten (Meter), berechnet frame-basierte Events und erzeugt visuelle Overlays, Analysen sowie einen automatisierten PDF-Report.
@@ -101,7 +101,6 @@ pip install -r requirements.txt
 ```
 
 ### 3. Konfiguration prüfen
->>>>>>> 2f35610 (update)
 
 - `config.py` öffnen und sicherstellen, dass folgende Pfade korrekt gesetzt sind:
   - Input-Video
